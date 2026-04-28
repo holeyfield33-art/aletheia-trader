@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  dashboard:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    command: bash -lc "pip install --no-cache-dir -r requirements.txt && streamlit run dashboard/app.py --server.address=0.0.0.0 --server.port=8501"
+    ports:
+      - "8501:8501"

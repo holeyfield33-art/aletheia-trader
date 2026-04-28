@@ -1,0 +1,43 @@
+{
+  "policy_pack": "trading_signal",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "rule_id": "TRADE_001",
+      "name": "Only allowed instruments",
+      "condition": {
+        "field": "instrument",
+        "operator": "in_list",
+        "value": [
+          "EUR/USD",
+          "GBP/USD",
+          "USD/JPY",
+          "SPY",
+          "QQQ"
+        ]
+      },
+      "decision": "PROCEED"
+    },
+    {
+      "rule_id": "TRADE_002",
+      "name": "Max daily signals per instrument",
+      "condition": {},
+      "decision": "PROCEED",
+      "rate_limit": {
+        "signals_per_day": 10
+      }
+    },
+    {
+      "rule_id": "TRADE_003",
+      "name": "Block after 3 consecutive losses (paper)",
+      "condition": {},
+      "decision": "ESCALATE"
+    },
+    {
+      "rule_id": "TRADE_999",
+      "name": "Default block unknown instruments",
+      "condition": {},
+      "decision": "BLOCK"
+    }
+  ]
+}

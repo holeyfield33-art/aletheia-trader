@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pandas
+numpy
+yfinance
+forex-python
+alpaca-py
+requests
+python-dotenv
+streamlit
+websocket-client
+pytest
