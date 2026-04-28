@@ -61,21 +61,30 @@ class SignalEngine:
         rsi = self.compute_rsi(close)
         macd, signal, hist = self.compute_macd(close)
         bb_upper, bb_mid, bb_lower = self.compute_bollinger_bands(close)
+        
+        rsi_val = float(rsi.iloc[-1].item()) if rsi.iloc[-1] is not pd.NA else 50.0
+        macd_val = float(macd.iloc[-1].item()) if macd.iloc[-1] is not pd.NA else 0.0
+        signal_val = float(signal.iloc[-1].item()) if signal.iloc[-1] is not pd.NA else 0.0
+        hist_val = float(hist.iloc[-1].item()) if hist.iloc[-1] is not pd.NA else 0.0
+        bb_u_val = float(bb_upper.iloc[-1].item()) if bb_upper.iloc[-1] is not pd.NA else 0.0
+        bb_m_val = float(bb_mid.iloc[-1].item()) if bb_mid.iloc[-1] is not pd.NA else 0.0
+        bb_l_val = float(bb_lower.iloc[-1].item()) if bb_lower.iloc[-1] is not pd.NA else 0.0
+        
         return IndicatorSnapshot(
-            rsi=float(rsi.iloc[-1]),
-            macd=float(macd.iloc[-1]),
-            macd_signal=float(signal.iloc[-1]),
-            macd_hist=float(hist.iloc[-1]),
-            bb_upper=float(bb_upper.iloc[-1]) if pd.notna(bb_upper.iloc[-1]) else 0.0,
-            bb_mid=float(bb_mid.iloc[-1]) if pd.notna(bb_mid.iloc[-1]) else 0.0,
-            bb_lower=float(bb_lower.iloc[-1]) if pd.notna(bb_lower.iloc[-1]) else 0.0,
+            rsi=rsi_val,
+            macd=macd_val,
+            macd_signal=signal_val,
+            macd_hist=hist_val,
+            bb_upper=bb_u_val,
+            bb_mid=bb_m_val,
+            bb_lower=bb_l_val,
         )
 
     def generate_forex_signal(self, df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
         """df must include a `close` column; returns BUY, SELL, or HOLD."""
         close = df["close"]
         snap = self._snapshot(close)
-        prev_hist = float(self.compute_macd(close)[2].iloc[-2]) if len(close) > 1 else 0.0
+        prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
 
         if snap.rsi < 30 and snap.macd_hist > 0 and prev_hist <= 0:
             action = "BUY"

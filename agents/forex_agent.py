@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 from typing import Dict, Optional
@@ -62,7 +62,7 @@ class ForexAgent:
             "signal": signal,
             "indicators": indicators,
             "approval_required": True,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         receipt = self.auditor.audit(action="generate_signal", payload=payload)
         return {
