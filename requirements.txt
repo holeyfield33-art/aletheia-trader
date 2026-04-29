@@ -8,5 +8,6 @@ alpaca-py
 requests
 python-dotenv
 streamlit
+streamlit-autorefresh
 websocket-client
 pytest

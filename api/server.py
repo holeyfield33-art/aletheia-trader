@@ -3,15 +3,16 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
 from agents.forex_agent import ForexAgent
 from agents.options_agent import OptionsAgent
+from agents.crypto_agent import CryptoAgent
 
 load_dotenv()
 
@@ -19,6 +20,14 @@ app = FastAPI(title="Aletheia Trader API", version="1.0.0")
 ledger = SignalAndOrderLedger()
 forex_agent = ForexAgent()
 options_agent = OptionsAgent()
+
+
+def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> str:
+    """Allow open access by default, enforce X-API-Key only when API_AUTH_KEY is configured."""
+    configured_key = os.getenv("API_AUTH_KEY", "")
+    if configured_key and x_api_key != configured_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return x_api_key or ""
 
 
 class GenerateSignalRequest(BaseModel):
@@ -103,6 +112,19 @@ async def get_pending_signals():
     """Get all pending signals awaiting approval."""
     signals = ledger.get_pending_signals()
     return {"count": len(signals), "signals": signals}
+
+
+@app.api_route("/v1/signals/crypto", methods=["GET", "POST"])
+async def generate_crypto_signal(
+    symbol: str = "BTC-USD",
+    gateway_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    auth: str = Depends(verify_api_key),
+):
+    """Generate a crypto signal and return audit receipt metadata."""
+    del auth  # dependency side effect only
+    agent = CryptoAgent(gateway_url=gateway_url, api_key=api_key)
+    return agent.generate_signal(symbol)
 
 
 @app.post("/v1/signals/approve")

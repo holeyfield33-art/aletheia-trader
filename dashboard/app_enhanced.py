@@ -3,6 +3,7 @@ from __future__ import annotations
 import requests
 import streamlit as st
 import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -17,12 +18,24 @@ st.set_page_config(page_title="Aletheia Trader", layout="wide", initial_sidebar_
 st.title("🎯 Aletheia Trader")
 st.caption("Signal first, execute later. Every decision signed.")
 
+
+def render_receipt_preview(receipt: str) -> None:
+    """Render short receipt text plus expandable full-value viewer."""
+    if not receipt:
+        st.caption("Receipt: none")
+        return
+    preview = f"{receipt[:16]}..." if len(receipt) > 16 else receipt
+    st.caption(f"Receipt: {preview}")
+    with st.expander("View full receipt", expanded=False):
+        st.code(receipt)
+
 # Sidebar navigation
 with st.sidebar:
     st.header("Navigation")
     page = st.radio("Select View:", ["Dashboard", "Signal Generator", "Orders", "Analytics", "Settings"])
 
 if page == "Dashboard":
+    st_autorefresh(interval=60000, key="dashboard_refresh")
     st.subheader("📊 Dashboard")
     
     col1, col2, col3 = st.columns(3)
@@ -67,8 +80,8 @@ if page == "Dashboard":
                             for i, (key, val) in enumerate(ind_items[:4]):
                                 with ind_cols[i]:
                                     st.caption(f"{key}: {val:.2f}")
-                        
-                        st.caption(f"Receipt: `{sig['receipt']}`")
+
+                        render_receipt_preview(str(sig.get("receipt", "")))
                     
                     with col_right:
                         st.write("**Entry Price:**")
@@ -171,7 +184,7 @@ elif page == "Signal Generator":
                         st.write(f"**Signal:** `{data['signal']}`")
                         st.write(f"**Instrument:** {data['instrument']}")
                     with col2:
-                        st.write(f"**Receipt:** `{data['receipt']}`")
+                        render_receipt_preview(str(data.get("receipt", "")))
                     
                     st.write("**Indicators:**")
                     st.json(data['indicators'])
@@ -181,6 +194,37 @@ elif page == "Signal Generator":
                     st.error(f"Error: {resp.text}")
         except Exception as e:
             st.error(f"Error: {e}")
+
+    st.divider()
+    with st.expander("Crypto Signals (Coinbase)"):
+        crypto_symbol = st.selectbox("Symbol", ["BTC-USD", "ETH-USD", "SOL-USD"], key="crypto_sym")
+        crypto_gateway = st.text_input("Aletheia Gateway URL (optional)", key="crypto_gw")
+        crypto_key = st.text_input("API Key (optional)", type="password", key="crypto_key")
+
+        if st.button("Generate Crypto Signal", use_container_width=True):
+            try:
+                with st.spinner(f"Analyzing {crypto_symbol}..."):
+                    params = {"symbol": crypto_symbol}
+                    if crypto_gateway:
+                        params["gateway_url"] = crypto_gateway
+                    if crypto_key:
+                        params["api_key"] = crypto_key
+
+                    response = requests.post(
+                        f"{API_BASE}/v1/signals/crypto",
+                        params=params,
+                        headers={"X-API-Key": st.session_state.get("api_key", "")},
+                    )
+
+                    if response.status_code == 200:
+                        signal = response.json()
+                        st.json(signal)
+                        st.success(f"Signal: {signal.get('action', 'N/A')} - {signal.get('reason', 'no reason')}")
+                        render_receipt_preview(str(signal.get("receipt", "")))
+                    else:
+                        st.error(f"Error: {response.text}")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 
 elif page == "Orders":
