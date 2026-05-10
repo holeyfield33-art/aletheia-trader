@@ -39,6 +39,7 @@ docker compose up --build
 - Dashboard views for signal generation, approvals, orders, and analytics
 - JSON-backed ledger with lock-protected atomic writes
 - Vectorized backtesting engine with optimization, walk-forward, and Monte Carlo
+- Live Market Watcher orchestrator with heartbeat, regime detection, alerts, and correlation diagnostics
 
 ## Vectorized Backtesting
 
@@ -53,7 +54,7 @@ Additional examples are in `backtesting/examples.md`.
 ## Architecture
 
 ```text
-Dashboard (Streamlit) <-> API (FastAPI) <-> Agents + Audit Wrapper <-> JSON Ledger
+Dashboard (Streamlit) <-> API (FastAPI) <-> Market Watcher + Agents <-> Aletheia Core Guard <-> JSON Ledger
 ```
 
 ## API Summary
@@ -69,6 +70,11 @@ Dashboard (Streamlit) <-> API (FastAPI) <-> Agents + Audit Wrapper <-> JSON Ledg
 | GET | `/v1/orders` | List orders (optional `status`) |
 | POST | `/v1/orders/close` | Close an order |
 | GET | `/v1/analytics/pnl` | Daily and total P&L |
+| GET | `/v1/market-watcher/status` | Live watcher health and latest snapshot |
+| GET | `/v1/market-watcher/history` | Historical watcher snapshots |
+| POST | `/v1/market-watcher/start` | Start watcher loop |
+| POST | `/v1/market-watcher/stop` | Stop watcher loop |
+| POST | `/v1/market-watcher/run-once` | Run single watcher cycle |
 
 ## Dashboard Screenshots
 
@@ -97,6 +103,26 @@ receipt = auditor.audit(
     payload={"instrument": "EUR/USD", "signal": "BUY"},
 )
 print(receipt["receipt"])
+```
+
+## Market Watcher Service
+
+Run the watcher directly as a service:
+
+```bash
+python -m market_watcher.run
+```
+
+Optional run-once mode:
+
+```bash
+python -m market_watcher.run --run-once --symbols EUR/USD SPY BTC-USD --timeframe 1h
+```
+
+Configuration can be provided via environment variables (`MARKET_WATCHER_*`) or an optional YAML/JSON config file:
+
+```bash
+python -m market_watcher.run --config market_watcher.yaml
 ```
 
 ## Development

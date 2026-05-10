@@ -240,7 +240,7 @@ with st.sidebar:
         [
             "📊 Dashboard",
             "🚀 Signal Generator",
-            "👁️ Market Watcher",
+            "👁️ Live Market Watcher",
             "🧪 Backtesting Lab",
             "⏳ Pending Approvals",
             "📈 Trade History",
@@ -369,9 +369,9 @@ elif page == "🚀 Signal Generator":
             except Exception as e:
                 st.error(f"Error: {str(e)[:60]}")
 
-elif page == "👁️ Market Watcher":
+elif page == "👁️ Live Market Watcher":
     render_header()
-    st.markdown("### 👁️ Market Watcher")
+    st.markdown("### 👁️ Live Market Watcher")
     st.caption(
         "Background market diagnostics orchestrator with Aletheia-protected signal publication."
     )
