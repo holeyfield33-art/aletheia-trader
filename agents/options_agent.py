@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from agents.signal_engine import SignalEngine
 from audit.aletheia_wrapper import AletheiaWrapper
+from backtesting.data import DataManager
 
 load_dotenv()
 
@@ -30,31 +31,31 @@ def _categorize_expiration(exp_str: str) -> str:
 class OptionsAgent:
     """Generate directional options signals with strike selection and chain analysis."""
 
-    def __init__(self, gateway_url: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        gateway_url: str | None = None,
+        api_key: str | None = None,
+        data_manager: DataManager | None = None,
+    ) -> None:
         self.gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
         self.api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
         self.engine = SignalEngine()
         self.auditor = AletheiaWrapper(self.gateway_url, self.api_key)
+        self.data_manager = data_manager or DataManager(
+            gateway_url=self.gateway_url,
+            api_key=self.api_key,
+        )
 
     def get_price_data(self, symbol: str, period: str = "1mo", interval: str = "30m"):
-        data = yf.download(
-            symbol, period=period, interval=interval, auto_adjust=True, progress=False
+        start, end = self.data_manager.period_to_date_range(period)
+        data = self.data_manager.download(
+            symbol=symbol,
+            timeframe=interval,
+            start=start,
+            end=end,
         )
         if data.empty:
             return data
-
-        if "Close" in data.columns:
-            data = data.rename(
-                columns={
-                    "Open": "open",
-                    "High": "high",
-                    "Low": "low",
-                    "Close": "close",
-                    "Volume": "volume",
-                }
-            )
-        elif "close" not in data.columns:
-            data["close"] = data.iloc[:, 0]
         return data
 
     def get_option_chain_metadata(

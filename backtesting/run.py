@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Aletheia Trader vectorized backtesting runner")
     parser.add_argument("--symbol", default="EURUSD", help="Single symbol or comma-separated list")
     parser.add_argument("--strategy", default="macd_rsi", help="Strategy name")
-    parser.add_argument("--timeframe", default="1h", help="YFinance interval")
+    parser.add_argument("--timeframe", default="1h", help="Market data timeframe")
     parser.add_argument("--start", default="2022-01-01", help="Backtest start date")
     parser.add_argument("--end", default="2025-01-01", help="Backtest end date")
     parser.add_argument("--initial-cash", type=float, default=100000.0)

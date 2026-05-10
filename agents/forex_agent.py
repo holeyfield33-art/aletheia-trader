@@ -4,11 +4,11 @@ import os
 from datetime import UTC, datetime
 
 import pandas as pd
-import yfinance as yf
 from dotenv import load_dotenv
 
 from agents.signal_engine import SignalEngine
 from audit.aletheia_wrapper import AletheiaWrapper
+from backtesting.data import DataManager
 
 load_dotenv()
 
@@ -16,33 +16,31 @@ load_dotenv()
 class ForexAgent:
     """Generate forex signals and send each decision through audit."""
 
-    def __init__(self, gateway_url: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        gateway_url: str | None = None,
+        api_key: str | None = None,
+        data_manager: DataManager | None = None,
+    ) -> None:
         self.gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
         self.api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
         self.engine = SignalEngine()
         self.auditor = AletheiaWrapper(self.gateway_url, self.api_key)
+        self.data_manager = data_manager or DataManager(
+            gateway_url=self.gateway_url,
+            api_key=self.api_key,
+        )
 
     def get_forex_data(self, pair: str, period: str = "5d", interval: str = "15m"):
-        mapping = {"EUR/USD": "FXE", "GBP/USD": "FXB", "USD/JPY": "FXY"}
-        ticker = mapping.get(pair, "FXE")
-        data = yf.download(
-            ticker, period=period, interval=interval, auto_adjust=True, progress=False
+        start, end = self.data_manager.period_to_date_range(period)
+        data = self.data_manager.download(
+            symbol=pair,
+            timeframe=interval,
+            start=start,
+            end=end,
         )
         if data.empty:
             return data
-
-        if "Close" in data.columns:
-            data = data.rename(
-                columns={
-                    "Open": "open",
-                    "High": "high",
-                    "Low": "low",
-                    "Close": "close",
-                    "Volume": "volume",
-                }
-            )
-        elif "close" not in data.columns:
-            data["close"] = data.iloc[:, 0]
         return data
 
     def _fallback_signal(self, pair: str) -> dict[str, object]:
