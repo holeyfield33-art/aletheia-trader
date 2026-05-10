@@ -1,29 +1,13 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from pathlib import Path
-import sys
-from typing import Dict, Optional
+from datetime import UTC, datetime
 
-import requests
 import yfinance as yf
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
-try:
-    from agents.signal_engine import SignalEngine
-except ModuleNotFoundError:  # pragma: no cover
-    from signal_engine import SignalEngine
-
-try:
-    from audit.aletheia_wrapper import AletheiaWrapper
-except ModuleNotFoundError:  # pragma: no cover
-    from aletheia_wrapper import AletheiaWrapper
-
+from agents.signal_engine import SignalEngine
+from audit.aletheia_wrapper import AletheiaWrapper
 
 load_dotenv()
 
@@ -31,7 +15,7 @@ load_dotenv()
 class ForexAgent:
     """Generate forex signals and send each decision through audit."""
 
-    def __init__(self, gateway_url: Optional[str] = None, api_key: Optional[str] = None) -> None:
+    def __init__(self, gateway_url: str | None = None, api_key: str | None = None) -> None:
         self.gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
         self.api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
         self.engine = SignalEngine()
@@ -40,7 +24,9 @@ class ForexAgent:
     def get_forex_data(self, pair: str, period: str = "5d", interval: str = "15m"):
         mapping = {"EUR/USD": "FXE", "GBP/USD": "FXB", "USD/JPY": "FXY"}
         ticker = mapping.get(pair, "FXE")
-        data = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+        data = yf.download(
+            ticker, period=period, interval=interval, auto_adjust=True, progress=False
+        )
         if data.empty:
             return data
 
@@ -50,7 +36,7 @@ class ForexAgent:
             data["close"] = data.iloc[:, 0]
         return data
 
-    def run(self, pair: str = "EUR/USD") -> Dict[str, object]:
+    def run(self, pair: str = "EUR/USD") -> dict[str, object]:
         data = self.get_forex_data(pair)
         if data.empty:
             return {"pair": pair, "signal": "ERROR", "error": "no data"}
@@ -62,7 +48,7 @@ class ForexAgent:
             "signal": signal,
             "indicators": indicators,
             "approval_required": True,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         receipt = self.auditor.audit(action="generate_signal", payload=payload)
         return {
@@ -72,8 +58,3 @@ class ForexAgent:
             "receipt": receipt.get("receipt", "mock-receipt"),
             "approved": False,
         }
-
-
-if __name__ == "__main__":
-    agent = ForexAgent()
-    print(agent.run("EUR/USD"))

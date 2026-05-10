@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
+import json
 
 from agents.forex_agent import ForexAgent
 from agents.options_agent import OptionsAgent
@@ -26,9 +21,12 @@ def main() -> None:
     if opt_res.get("signal") in {"CALL_BUY", "PUT_BUY"}:
         sim.submit_order("SPY", opt_res["signal"], qty=1.0, price=1.0, approved=False)
 
-    print("Forex:", fx_res)
-    print("Options:", opt_res)
-    print("Daily PnL:", sim.get_daily_pnl())
+    summary = {
+        "forex": fx_res,
+        "options": opt_res,
+        "daily_pnl": sim.get_daily_pnl(),
+    }
+    print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

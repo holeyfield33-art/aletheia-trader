@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
@@ -19,7 +18,9 @@ def _normalize_gateway_base_url(gateway_url: str) -> str:
     return base_url
 
 
-def audit_signal(signal_data: Dict[str, Any], gateway_url: str | None = None, api_key: str | None = None) -> Dict[str, Any]:
+def audit_signal(
+    signal_data: dict[str, Any], gateway_url: str | None = None, api_key: str | None = None
+) -> dict[str, Any]:
     """Audit signal payload and return a gateway or mock receipt."""
     resolved_gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
     resolved_api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
@@ -41,7 +42,10 @@ def audit_signal(signal_data: Dict[str, Any], gateway_url: str | None = None, ap
             timeout=5,
         )
         response.raise_for_status()
-        data = response.json()
+        response_payload = response.json()
+        data: dict[str, Any] = (
+            response_payload if isinstance(response_payload, dict) else {"raw": response_payload}
+        )
         if "receipt" not in data:
             data["receipt"] = f"gateway-{int(datetime.now().timestamp())}"
         return data
@@ -58,14 +62,16 @@ class AletheiaWrapper:
         self.gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
         self.api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
 
-    def audit(self, action: str, payload: Dict[str, Any], policy_pack: str = "trading_signal") -> Dict[str, Any]:
+    def audit(
+        self, action: str, payload: dict[str, Any], policy_pack: str = "trading_signal"
+    ) -> dict[str, Any]:
         """Audit every signal/order decision; fallback to local mock receipt if unavailable."""
         event = {
             "agent_id": "aletheia_trader",
             "action": action,
             "payload": payload,
             "policy_pack": policy_pack,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "decision_mode": "signal_only_manual_approval",
         }
         return audit_signal(event, gateway_url=self.gateway_url, api_key=self.api_key)

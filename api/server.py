@@ -2,27 +2,45 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel
 from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
 
-from brokers.signal_and_order_ledger import SignalAndOrderLedger
+from agents.crypto_agent import CryptoAgent
 from agents.forex_agent import ForexAgent
 from agents.options_agent import OptionsAgent
-from agents.crypto_agent import CryptoAgent
+from brokers.signal_and_order_ledger import SignalAndOrderLedger
 
 load_dotenv()
 
-app = FastAPI(title="Aletheia Trader API", version="1.0.0")
+app = FastAPI(title="Aletheia Trader API", version="1.0.1")
 ledger = SignalAndOrderLedger()
 forex_agent = ForexAgent()
 options_agent = OptionsAgent()
 
 
-def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> str:
+class OrderStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    PENDING = "PENDING"
+
+
+def _validate_instrument(value: str) -> str:
+    cleaned = value.strip().upper()
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="pair_or_symbol must not be empty")
+
+    allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/_")
+    if any(ch not in allowed_chars for ch in cleaned):
+        raise HTTPException(status_code=422, detail="pair_or_symbol contains invalid characters")
+    return cleaned
+
+
+def verify_api_key(x_api_key: str | None = Header(default=None)) -> str:
     """Allow open access by default, enforce X-API-Key only when API_AUTH_KEY is configured."""
     configured_key = os.getenv("API_AUTH_KEY", "")
     if configured_key and x_api_key != configured_key:
@@ -31,8 +49,8 @@ def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> str:
 
 
 class GenerateSignalRequest(BaseModel):
-    agent_type: str  # "forex" or "options"
-    pair_or_symbol: str
+    agent_type: Literal["forex", "options"]
+    pair_or_symbol: str = Field(min_length=1, max_length=20)
 
 
 class GenerateSignalResponse(BaseModel):
@@ -40,66 +58,70 @@ class GenerateSignalResponse(BaseModel):
     agent_type: str
     instrument: str
     signal: str
-    indicators: Dict[str, float]
+    indicators: dict[str, float]
     receipt: str
     expires_in_minutes: int
 
 
 class ApproveSignalRequest(BaseModel):
-    signal_id: str
-    entry_price: float
-    qty: float = 1.0
+    signal_id: str = Field(min_length=3, max_length=64)
+    entry_price: float = Field(gt=0)
+    qty: float = Field(default=1.0, gt=0)
 
 
 class RejectSignalRequest(BaseModel):
-    signal_id: str
+    signal_id: str = Field(min_length=3, max_length=64)
 
 
 class CloseOrderRequest(BaseModel):
-    order_id: str
-    exit_price: float
+    order_id: str = Field(min_length=3, max_length=64)
+    exit_price: float = Field(gt=0)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+    """Health check endpoint for container and service monitoring."""
+    return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
 
 
 @app.post("/v1/signals/generate", response_model=GenerateSignalResponse)
 async def generate_signal(req: GenerateSignalRequest):
     """Generate a new trading signal."""
     signal_id = f"sig-{uuid.uuid4().hex[:8]}"
-    
+    instrument = _validate_instrument(req.pair_or_symbol)
+
     if req.agent_type == "forex":
-        result = forex_agent.run(req.pair_or_symbol)
+        result = forex_agent.run(instrument)
         agent_type = "forex"
-        instrument = result.get("pair", req.pair_or_symbol)
+        resolved_instrument = result.get("pair", instrument)
     elif req.agent_type == "options":
-        result = options_agent.run(req.pair_or_symbol)
+        result = options_agent.run(instrument)
         agent_type = "options"
-        instrument = result.get("symbol", req.pair_or_symbol)
+        resolved_instrument = result.get("symbol", instrument)
     else:
         raise HTTPException(status_code=400, detail="agent_type must be 'forex' or 'options'")
-    
+
     if result.get("signal") == "ERROR":
-        raise HTTPException(status_code=500, detail=f"Signal generation failed: {result.get('error')}")
-    
+        raise HTTPException(
+            status_code=500, detail=f"Signal generation failed: {result.get('error')}"
+        )
+
     chain_data = result.get("chain_data") if agent_type == "options" else None
     ledger.add_signal(
         signal_id=signal_id,
         agent_type=agent_type,
-        instrument=instrument,
+        instrument=resolved_instrument,
         signal=result.get("signal"),
         indicators=result.get("meta", {}),
         chain_data=chain_data,
         receipt=result.get("receipt", ""),
         ttl_minutes=120,
     )
-    
+
     return GenerateSignalResponse(
         signal_id=signal_id,
         agent_type=agent_type,
-        instrument=instrument,
+        instrument=resolved_instrument,
         signal=result.get("signal"),
         indicators=result.get("meta", {}),
         receipt=result.get("receipt", ""),
@@ -117,12 +139,13 @@ async def get_pending_signals():
 @app.api_route("/v1/signals/crypto", methods=["GET", "POST"])
 async def generate_crypto_signal(
     symbol: str = "BTC-USD",
-    gateway_url: Optional[str] = None,
-    api_key: Optional[str] = None,
+    gateway_url: str | None = None,
+    api_key: str | None = None,
     auth: str = Depends(verify_api_key),
 ):
     """Generate a crypto signal and return audit receipt metadata."""
     del auth  # dependency side effect only
+    symbol = _validate_instrument(symbol)
     agent = CryptoAgent(gateway_url=gateway_url, api_key=api_key)
     return agent.generate_signal(symbol)
 
@@ -133,8 +156,12 @@ async def approve_signal(req: ApproveSignalRequest):
     signal = ledger.approve_signal(req.signal_id)
     if not signal:
         raise HTTPException(status_code=404, detail="Signal not found or already approved")
-    
-    order = ledger.create_order_from_signal(signal, entry_price=req.entry_price, qty=req.qty)
+
+    try:
+        order = ledger.create_order_from_signal(signal, entry_price=req.entry_price, qty=req.qty)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     return {
         "order_id": order.get("order_id"),
         "signal_id": req.signal_id,
@@ -157,22 +184,27 @@ async def reject_signal(req: RejectSignalRequest):
 
 
 @app.get("/v1/orders")
-async def get_orders(status: str = None):
+async def get_orders(status: OrderStatus | None = None):
     """Get orders, optionally filtered by status (OPEN, CLOSED, PENDING)."""
-    orders = ledger.get_orders(status=status)
+    status_value: str | None = status.value if status else None
+    orders = ledger.get_orders(status=status_value)
     return {"count": len(orders), "orders": orders}
 
 
 @app.post("/v1/orders/close")
 async def close_order(req: CloseOrderRequest):
     """Close an open order at a given exit price."""
-    order = ledger.close_order(req.order_id, req.exit_price)
+    try:
+        order = ledger.close_order(req.order_id, req.exit_price)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or not open")
-    
+
     sign = 1 if order.get("side") in {"BUY", "CALL_BUY"} else -1
     pnl = sign * (float(req.exit_price) - float(order.get("entry_price"))) * float(order.get("qty"))
-    
+
     return {
         "order_id": req.order_id,
         "status": "CLOSED",
@@ -187,12 +219,12 @@ async def close_order(req: CloseOrderRequest):
 @app.get("/v1/analytics/pnl")
 async def get_pnl():
     """Get daily and total P&L."""
-    daily = ledger.get_daily_pnl()
-    total = ledger.get_total_pnl()
+    daily: dict[str, Any] = ledger.get_daily_pnl()
+    total: float = ledger.get_total_pnl()
     return {
         "daily": daily,
         "total_pnl": total,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 

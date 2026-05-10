@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, List, Optional
 import json
+import tempfile
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from threading import RLock
+from typing import Any
 
 
 @dataclass
@@ -14,11 +16,11 @@ class SimulatedOrder:
     side: str
     qty: float
     entry_price: float
-    exit_price: Optional[float]
+    exit_price: float | None
     status: str
     approved: bool
     created_at: str
-    closed_at: Optional[str]
+    closed_at: str | None
 
 
 class PaperSimulator:
@@ -26,77 +28,124 @@ class PaperSimulator:
 
     def __init__(self, ledger_path: str = "data/simulated_orders.json") -> None:
         self.ledger_path = Path(ledger_path)
+        self._lock = RLock()
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.ledger_path.exists():
             self._write([])
 
-    def _read(self) -> List[Dict[str, object]]:
-        return json.loads(self.ledger_path.read_text(encoding="utf-8"))
+    def _read(self) -> list[dict[str, object]]:
+        if not self.ledger_path.exists():
+            return []
+        raw = self.ledger_path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, list):
+                return payload
+        except json.JSONDecodeError:
+            return []
+        return []
 
-    def _write(self, payload: List[Dict[str, object]]) -> None:
-        self.ledger_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    def _write(self, payload: list[dict[str, Any]]) -> None:
+        serialized = json.dumps(payload, indent=2)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=self.ledger_path.parent, delete=False
+        ) as temp_file:
+            temp_file.write(serialized)
+            temp_name = temp_file.name
+        Path(temp_name).replace(self.ledger_path)
 
-    def submit_order(self, instrument: str, side: str, qty: float, price: float, approved: bool = False) -> Dict[str, object]:
-        orders = self._read()
-        now = datetime.now(timezone.utc).isoformat()
-        order = SimulatedOrder(
-            order_id=f"sim-{len(orders) + 1}",
-            instrument=instrument,
-            side=side,
-            qty=qty,
-            entry_price=price,
-            exit_price=None,
-            status="OPEN" if approved else "PENDING_APPROVAL",
-            approved=approved,
-            created_at=now,
-            closed_at=None,
-        )
-        orders.append(asdict(order))
-        self._write(orders)
-        return asdict(order)
+    def submit_order(
+        self, instrument: str, side: str, qty: float, price: float, approved: bool = False
+    ) -> dict[str, object]:
+        if qty <= 0:
+            raise ValueError("qty must be > 0")
+        if price <= 0:
+            raise ValueError("price must be > 0")
 
-    def approve_order(self, order_id: str) -> Optional[Dict[str, object]]:
-        orders = self._read()
-        for order in orders:
-            if order["order_id"] == order_id:
-                order["approved"] = True
-                if order["status"] == "PENDING_APPROVAL":
-                    order["status"] = "OPEN"
-                self._write(orders)
-                return order
+        with self._lock:
+            orders = self._read()
+            now = datetime.now(UTC).isoformat()
+            order = SimulatedOrder(
+                order_id=f"sim-{len(orders) + 1}",
+                instrument=instrument,
+                side=side,
+                qty=float(qty),
+                entry_price=float(price),
+                exit_price=None,
+                status="OPEN" if approved else "PENDING_APPROVAL",
+                approved=approved,
+                created_at=now,
+                closed_at=None,
+            )
+            serialized = asdict(order)
+            orders.append(serialized)
+            self._write(orders)
+            return serialized
+
+    def approve_order(self, order_id: str) -> dict[str, object] | None:
+        with self._lock:
+            orders = self._read()
+            for order in orders:
+                if order["order_id"] == order_id:
+                    order["approved"] = True
+                    if order["status"] == "PENDING_APPROVAL":
+                        order["status"] = "OPEN"
+                    self._write(orders)
+                    return order
         return None
 
-    def close_order(self, order_id: str, exit_price: float) -> Optional[Dict[str, object]]:
-        orders = self._read()
-        for order in orders:
-            if order["order_id"] == order_id and order["status"] == "OPEN":
-                order["exit_price"] = exit_price
-                order["status"] = "CLOSED"
-                order["closed_at"] = datetime.now(timezone.utc).isoformat()
-                self._write(orders)
-                return order
+    def close_order(self, order_id: str, exit_price: float) -> dict[str, object] | None:
+        if exit_price <= 0:
+            raise ValueError("exit_price must be > 0")
+
+        with self._lock:
+            orders = self._read()
+            for order in orders:
+                if order["order_id"] == order_id and order["status"] == "OPEN":
+                    order["exit_price"] = float(exit_price)
+                    order["status"] = "CLOSED"
+                    order["closed_at"] = datetime.now(UTC).isoformat()
+                    self._write(orders)
+                    return order
         return None
 
-    def get_daily_pnl(self) -> Dict[str, object]:
-        orders = self._read()
-        day = datetime.now(timezone.utc).date()
+    def get_daily_pnl(self) -> dict[str, object]:
+        with self._lock:
+            orders = self._read()
+        day = datetime.now(UTC).date()
         pnl = 0.0
         closed = 0
         open_count = 0
 
         for order in orders:
-            created = datetime.fromisoformat(order["created_at"]).date()
+            created_raw = str(order.get("created_at", ""))
+            if not created_raw:
+                continue
+            created = datetime.fromisoformat(created_raw).date()
             if created != day:
                 continue
 
-            if order["status"] == "CLOSED" and order["exit_price"] is not None:
-                sign = 1 if order["side"].upper() in {"BUY", "CALL_BUY"} else -1
-                pnl += sign * (float(order["exit_price"]) - float(order["entry_price"])) * float(order["qty"])
+            status = str(order.get("status", ""))
+            if status == "CLOSED" and order.get("exit_price") is not None:
+                side = str(order.get("side", ""))
+                sign = 1 if side.upper() in {"BUY", "CALL_BUY"} else -1
+                exit_price: float = float(order.get("exit_price", 0.0) or 0.0)
+                entry_price: float = float(order.get("entry_price", 0.0) or 0.0)
+                qty: float = float(order.get("qty", 0.0) or 0.0)
+                pnl += sign * (exit_price - entry_price) * qty
                 closed += 1
-            elif order["status"] in {"OPEN", "PENDING_APPROVAL"}:
+            elif status in {"OPEN", "PENDING_APPROVAL"}:
                 open_count += 1
 
-        return {"date": str(day), "daily_pnl": round(pnl, 2), "closed_orders": closed, "open_orders": open_count}
+        return {
+            "date": str(day),
+            "daily_pnl": round(pnl, 2),
+            "closed_orders": closed,
+            "open_orders": open_count,
+        }
 
-    def list_orders(self) -> List[Dict[str, object]]:
-        return self._read()
+    def list_orders(self) -> list[dict[str, object]]:
+        with self._lock:
+            return self._read()

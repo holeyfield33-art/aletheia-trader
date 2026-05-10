@@ -1,22 +1,14 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from pathlib import Path
-import sys
-from typing import Dict, Optional
+from datetime import UTC, datetime
 
 import pandas as pd
 import requests
 import yfinance as yf
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
 from audit.aletheia_wrapper import audit_signal
-
 
 load_dotenv()
 
@@ -24,15 +16,17 @@ load_dotenv()
 class CryptoAgent:
     """Generate simple crypto signals and audit each decision."""
 
-    def __init__(self, gateway_url: Optional[str] = None, api_key: Optional[str] = None) -> None:
+    def __init__(self, gateway_url: str | None = None, api_key: str | None = None) -> None:
         self.gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
         self.api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
         self.coinbase_api_key = os.getenv("COINBASE_API_KEY", "")
         self.base_url = "https://api.exchange.coinbase.com"
 
-    def get_historical_prices(self, symbol: str = "BTC-USD", days: int = 5, granularity_seconds: int = 3600) -> pd.DataFrame:
+    def get_historical_prices(
+        self, symbol: str = "BTC-USD", days: int = 5, granularity_seconds: int = 3600
+    ) -> pd.DataFrame:
         """Fetch hourly candles from Coinbase; fallback to yfinance if needed."""
-        end = datetime.now(timezone.utc)
+        end = datetime.now(UTC)
         start = end - pd.Timedelta(days=days)
 
         try:
@@ -55,14 +49,18 @@ class CryptoAgent:
 
             if candles:
                 # Coinbase candle format: [time, low, high, open, close, volume]
-                df = pd.DataFrame(candles, columns=["time", "low", "high", "open", "close", "volume"])
+                df = pd.DataFrame(
+                    candles, columns=["time", "low", "high", "open", "close", "volume"]
+                )
                 df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
                 df = df.sort_values("time").set_index("time")
                 return df
         except requests.RequestException:
             pass
 
-        data = yf.download(symbol, period=f"{days}d", interval="1h", auto_adjust=True, progress=False)
+        data = yf.download(
+            symbol, period=f"{days}d", interval="1h", auto_adjust=True, progress=False
+        )
         if data.empty:
             return data
 
@@ -82,16 +80,16 @@ class CryptoAgent:
         rsi = 100 - (100 / (1 + rs))
         return rsi.fillna(50.0)
 
-    def generate_signal(self, symbol: str = "BTC-USD") -> Dict[str, object]:
+    def generate_signal(self, symbol: str = "BTC-USD") -> dict[str, object]:
         """Generate BUY/SELL/HOLD signal from RSI and audit it."""
         data = self.get_historical_prices(symbol)
         if data.empty or "close" not in data.columns:
-            signal = {
+            signal: dict[str, object] = {
                 "agent_type": "crypto",
                 "symbol": symbol,
                 "action": "HOLD",
                 "reason": "no data",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
             receipt = audit_signal(signal, self.gateway_url, self.api_key)
             signal["receipt"] = receipt.get("receipt", "mock-receipt")
@@ -111,20 +109,16 @@ class CryptoAgent:
             action = "HOLD"
             reason = f"RSI neutral ({current_rsi:.1f})"
 
-        signal = {
+        result: dict[str, object] = {
             "agent_type": "crypto",
             "symbol": symbol,
             "action": action,
             "current_price": current_price,
             "rsi": current_rsi,
             "reason": reason,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
-        receipt = audit_signal(signal, self.gateway_url, self.api_key)
-        signal["receipt"] = receipt.get("receipt", "mock-receipt")
-        return signal
-
-
-if __name__ == "__main__":
-    print(CryptoAgent().generate_signal("BTC-USD"))
+        receipt = audit_signal(result, self.gateway_url, self.api_key)
+        result["receipt"] = receipt.get("receipt", "mock-receipt")
+        return result

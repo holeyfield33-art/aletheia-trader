@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
 
 import pandas as pd
 
@@ -42,7 +41,7 @@ class SignalEngine:
         rsi = 100 - (100 / (1 + rs))
         return rsi.fillna(50)
 
-    def compute_macd(self, prices: pd.Series) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    def compute_macd(self, prices: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
         ema_fast = prices.ewm(span=self.macd_fast, adjust=False).mean()
         ema_slow = prices.ewm(span=self.macd_slow, adjust=False).mean()
         macd = ema_fast - ema_slow
@@ -50,7 +49,7 @@ class SignalEngine:
         histogram = macd - signal
         return macd, signal, histogram
 
-    def compute_bollinger_bands(self, prices: pd.Series) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    def compute_bollinger_bands(self, prices: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
         mid = prices.rolling(window=self.bb_window).mean()
         std = prices.rolling(window=self.bb_window).std()
         upper = mid + (self.bb_std * std)
@@ -61,7 +60,7 @@ class SignalEngine:
         rsi = self.compute_rsi(close)
         macd, signal, hist = self.compute_macd(close)
         bb_upper, bb_mid, bb_lower = self.compute_bollinger_bands(close)
-        
+
         rsi_val = float(rsi.iloc[-1].item()) if rsi.iloc[-1] is not pd.NA else 50.0
         macd_val = float(macd.iloc[-1].item()) if macd.iloc[-1] is not pd.NA else 0.0
         signal_val = float(signal.iloc[-1].item()) if signal.iloc[-1] is not pd.NA else 0.0
@@ -69,7 +68,7 @@ class SignalEngine:
         bb_u_val = float(bb_upper.iloc[-1].item()) if bb_upper.iloc[-1] is not pd.NA else 0.0
         bb_m_val = float(bb_mid.iloc[-1].item()) if bb_mid.iloc[-1] is not pd.NA else 0.0
         bb_l_val = float(bb_lower.iloc[-1].item()) if bb_lower.iloc[-1] is not pd.NA else 0.0
-        
+
         return IndicatorSnapshot(
             rsi=rsi_val,
             macd=macd_val,
@@ -80,7 +79,7 @@ class SignalEngine:
             bb_lower=bb_l_val,
         )
 
-    def generate_forex_signal(self, df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
+    def generate_forex_signal(self, df: pd.DataFrame) -> tuple[str, dict[str, float]]:
         """df must include a `close` column; returns BUY, SELL, or HOLD."""
         close = df["close"]
         snap = self._snapshot(close)
@@ -95,7 +94,7 @@ class SignalEngine:
 
         return action, snap.__dict__
 
-    def generate_options_signal(self, df: pd.DataFrame) -> Tuple[str, Dict[str, float]]:
+    def generate_options_signal(self, df: pd.DataFrame) -> tuple[str, dict[str, float]]:
         """Simple directional options signal: CALL_BUY, PUT_BUY, or HOLD."""
         close = df["close"]
         snap = self._snapshot(close)

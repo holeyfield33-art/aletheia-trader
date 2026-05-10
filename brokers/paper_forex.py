@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Dict
-
 from brokers.simulator import PaperSimulator
 
 
@@ -11,7 +9,9 @@ class PaperForexBroker:
     def __init__(self, simulator: PaperSimulator | None = None) -> None:
         self.simulator = simulator or PaperSimulator()
 
-    def place_signal_order(self, pair: str, signal: str, reference_price: float, qty: float = 1.0) -> Dict[str, object]:
+    def place_signal_order(
+        self, pair: str, signal: str, reference_price: float, qty: float = 1.0
+    ) -> dict[str, object]:
         return self.simulator.submit_order(
             instrument=pair,
             side=signal,
