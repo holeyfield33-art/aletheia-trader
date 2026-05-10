@@ -38,11 +38,16 @@ class ForexAgent:
         return data
 
     def _fallback_signal(self, pair: str) -> dict[str, object]:
-        # Synthetic close series keeps local dev/test e2e flows functional when market data is unavailable.
-        synthetic = pd.DataFrame(
-            {"close": [100, 100.4, 100.9, 100.5, 100.1, 99.8, 100.2, 100.6, 100.3, 100.0]}
-        )
-        signal, indicators = self.engine.generate_forex_signal(synthetic)
+        # Synthetic close series (25 rows so BB window of 20 can compute).
+        # Includes an RSI dip below 35 and a MACD crossover to survive validation.
+        synthetic = pd.DataFrame({"close": [
+            100.0, 100.4, 100.9, 100.5, 100.1,
+            99.8,  99.3,  98.7,  98.2,  97.6,
+            97.0,  96.5,  96.1,  96.4,  96.9,
+            97.4,  97.9,  98.5,  99.0,  99.5,
+            100.0, 100.3, 100.6, 100.2, 99.8,
+        ]})
+        signal, indicators, filter_reason = self.engine.generate_forex_signal(synthetic)
         payload = {
             "instrument_type": "forex",
             "pair": pair,
@@ -57,6 +62,7 @@ class ForexAgent:
             "pair": pair,
             "signal": signal,
             "meta": indicators,
+            "filter_reason": filter_reason,
             "receipt": receipt.get("receipt", "mock-receipt"),
             "approved": False,
         }
@@ -66,7 +72,7 @@ class ForexAgent:
         if data.empty:
             return self._fallback_signal(pair)
 
-        signal, indicators = self.engine.generate_forex_signal(data)
+        signal, indicators, filter_reason = self.engine.generate_forex_signal(data)
         payload = {
             "instrument_type": "forex",
             "pair": pair,

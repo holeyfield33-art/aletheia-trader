@@ -86,6 +86,25 @@ def render_receipt(receipt: str):
     with st.expander(f"📋 View Receipt: {preview}", expanded=False):
         st.code(receipt, language="json")
 
+def render_filtered_signal(data: dict) -> None:
+    """Render a clear 'filtered / weak signal' card with the reason."""
+    reason = data.get("filter_reason") or "Conditions too weak for a reliable trade."
+    st.markdown(
+        f"""
+        <div style="background:rgba(239,68,68,0.1);border:1px solid #EF4444;border-radius:0.75rem;
+                    padding:1.25rem 1.5rem;margin:1rem 0;">
+            <div style="font-size:1rem;font-weight:700;color:#EF4444;">🚫 Invalid / Weak Signal — Filtered</div>
+            <div style="font-size:0.875rem;color:#94A3B8;margin-top:0.5rem;"><strong>Reason:</strong> {reason}</div>
+            <div style="font-size:0.75rem;color:#64748B;margin-top:0.5rem;">
+                Signal ID: {data.get('signal_id', 'N/A')} &nbsp;|&nbsp; Instrument: {data.get('instrument', 'N/A')}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.expander("🔬 View Raw Indicators", expanded=False):
+        st.json(data.get("indicators", {}))
+
 def check_api() -> tuple[bool, str]:
     try:
         resp = requests.get(f"{API_BASE}/health", timeout=REQUEST_TIMEOUT_SECONDS)
@@ -177,9 +196,14 @@ elif page == "🚀 Signal Generator":
                 resp = requests.post(f"{API_BASE}/v1/signals/generate", json={"agent_type": agent, "pair_or_symbol": instr}, timeout=REQUEST_TIMEOUT_SECONDS)
                 if resp.status_code == 200:
                     data = resp.json()
-                    st.balloons()
-                    st.success(f"✅ Signal: {data['signal_id']}")
-                    st.json(data.get("indicators", {}))
+                    if data.get("filtered"):
+                        render_filtered_signal(data)
+                    else:
+                        st.balloons()
+                        st.success(f"✅ Valid Signal: **{data['signal']}** — ID: {data['signal_id']}")
+                        st.json(data.get("indicators", {}))
+                else:
+                    st.error(f"API error {resp.status_code}: {resp.text[:120]}")
             except Exception as e:
                 st.error(f"Error: {str(e)[:60]}")
 

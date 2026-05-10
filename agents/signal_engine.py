@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pandas as pd
+
+NO_SIGNAL = "NO_SIGNAL"
 
 
 @dataclass
@@ -61,49 +64,127 @@ class SignalEngine:
         macd, signal, hist = self.compute_macd(close)
         bb_upper, bb_mid, bb_lower = self.compute_bollinger_bands(close)
 
-        rsi_val = float(rsi.iloc[-1].item()) if rsi.iloc[-1] is not pd.NA else 50.0
-        macd_val = float(macd.iloc[-1].item()) if macd.iloc[-1] is not pd.NA else 0.0
-        signal_val = float(signal.iloc[-1].item()) if signal.iloc[-1] is not pd.NA else 0.0
-        hist_val = float(hist.iloc[-1].item()) if hist.iloc[-1] is not pd.NA else 0.0
-        bb_u_val = float(bb_upper.iloc[-1].item()) if bb_upper.iloc[-1] is not pd.NA else 0.0
-        bb_m_val = float(bb_mid.iloc[-1].item()) if bb_mid.iloc[-1] is not pd.NA else 0.0
-        bb_l_val = float(bb_lower.iloc[-1].item()) if bb_lower.iloc[-1] is not pd.NA else 0.0
+        def _safe(series: pd.Series, fallback: float) -> float:
+            val = series.iloc[-1]
+            try:
+                fval = float(val.item()) if hasattr(val, "item") else float(val)
+                return fval if math.isfinite(fval) else fallback
+            except (TypeError, ValueError):
+                return fallback
 
         return IndicatorSnapshot(
-            rsi=rsi_val,
-            macd=macd_val,
-            macd_signal=signal_val,
-            macd_hist=hist_val,
-            bb_upper=bb_u_val,
-            bb_mid=bb_m_val,
-            bb_lower=bb_l_val,
+            rsi=_safe(rsi, 50.0),
+            macd=_safe(macd, 0.0),
+            macd_signal=_safe(signal, 0.0),
+            macd_hist=_safe(hist, 0.0),
+            bb_upper=_safe(bb_upper, 0.0),
+            bb_mid=_safe(bb_mid, 0.0),
+            bb_lower=_safe(bb_lower, 0.0),
         )
 
-    def generate_forex_signal(self, df: pd.DataFrame) -> tuple[str, dict[str, float]]:
-        """df must include a `close` column; returns BUY, SELL, or HOLD."""
+    def _validate_signal(
+        self,
+        snap: IndicatorSnapshot,
+        prev_hist: float,
+        last_price: float,
+    ) -> tuple[bool, str]:
+        """Validate whether market conditions are strong enough to generate a signal.
+
+        Returns (is_valid, filter_reason). An empty filter_reason means the signal is valid.
+
+        Rules (all must pass):
+          1. Bollinger Bands must be properly computed (all bands > 0).
+          2. At least ONE of the following conditions must be true:
+             a. Strong RSI: rsi < 35 (oversold) OR rsi > 65 (overbought)
+             b. Fresh MACD crossover: histogram changes sign between prev and current bar
+             c. Price touching a Bollinger Band with RSI confirmation:
+                  - price <= bb_lower AND rsi < 45  (lower band + oversold bias)
+                  - price >= bb_upper AND rsi > 55  (upper band + overbought bias)
+        """
+        # Rule 1 — Bollinger Bands must be calculated
+        if snap.bb_upper <= 0 or snap.bb_mid <= 0 or snap.bb_lower <= 0:
+            return False, "Bollinger Bands not yet calculated (insufficient price history)"
+
+        # Rule 2a — Strong RSI
+        rsi_strong = snap.rsi < 35 or snap.rsi > 65
+
+        # Rule 2b — Fresh MACD histogram crossover (sign change)
+        macd_crossover = (
+            (prev_hist > 0 and snap.macd_hist < 0)
+            or (prev_hist < 0 and snap.macd_hist > 0)
+        )
+
+        # Rule 2c — Price touching Bollinger Band with RSI confirmation
+        bb_lower_touch = last_price <= snap.bb_lower and snap.rsi < 45
+        bb_upper_touch = last_price >= snap.bb_upper and snap.rsi > 55
+        bb_touch_rsi = bb_lower_touch or bb_upper_touch
+
+        if rsi_strong or macd_crossover or bb_touch_rsi:
+            return True, ""
+
+        # Build human-readable reason why each condition failed
+        reasons: list[str] = []
+        if not rsi_strong:
+            reasons.append(f"RSI {snap.rsi:.1f} is near neutral (requires <35 or >65)")
+        if not macd_crossover:
+            reasons.append(
+                f"no fresh MACD crossover (hist: {prev_hist:+.4f} → {snap.macd_hist:+.4f})"
+            )
+        if not bb_touch_rsi:
+            reasons.append(
+                f"price {last_price:.4f} not touching Bollinger Bands "
+                f"[{snap.bb_lower:.4f} – {snap.bb_upper:.4f}] with RSI confirmation"
+            )
+        return False, "; ".join(reasons)
+
+    def generate_forex_signal(
+        self, df: pd.DataFrame
+    ) -> tuple[str, dict[str, float], str]:
+        """Return (signal, indicators, filter_reason).
+
+        signal is one of: BUY | SELL | HOLD | NO_SIGNAL
+        filter_reason is non-empty only when signal == NO_SIGNAL.
+        """
         close = df["close"]
         snap = self._snapshot(close)
         prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+        last_price = float(close.iloc[-1].item())
 
-        if snap.rsi < 30 and snap.macd_hist > 0 and prev_hist <= 0:
+        valid, reason = self._validate_signal(snap, prev_hist, last_price)
+        if not valid:
+            return NO_SIGNAL, snap.__dict__, reason
+
+        if snap.rsi < 35 and snap.macd_hist > 0 and prev_hist <= 0:
             action = "BUY"
-        elif snap.rsi > 70 and snap.macd_hist < 0 and prev_hist >= 0:
+        elif snap.rsi > 65 and snap.macd_hist < 0 and prev_hist >= 0:
             action = "SELL"
         else:
             action = "HOLD"
 
-        return action, snap.__dict__
+        return action, snap.__dict__, ""
 
-    def generate_options_signal(self, df: pd.DataFrame) -> tuple[str, dict[str, float]]:
-        """Simple directional options signal: CALL_BUY, PUT_BUY, or HOLD."""
+    def generate_options_signal(
+        self, df: pd.DataFrame
+    ) -> tuple[str, dict[str, float], str]:
+        """Return (signal, indicators, filter_reason).
+
+        signal is one of: CALL_BUY | PUT_BUY | HOLD | NO_SIGNAL
+        filter_reason is non-empty only when signal == NO_SIGNAL.
+        """
         close = df["close"]
         snap = self._snapshot(close)
+        prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+        last_price = float(close.iloc[-1].item())
 
-        if snap.rsi < 40 and snap.macd_hist > 0:
+        valid, reason = self._validate_signal(snap, prev_hist, last_price)
+        if not valid:
+            return NO_SIGNAL, snap.__dict__, reason
+
+        if snap.rsi < 35 and snap.macd_hist > 0:
             action = "CALL_BUY"
-        elif snap.rsi > 60 and snap.macd_hist < 0:
+        elif snap.rsi > 65 and snap.macd_hist < 0:
             action = "PUT_BUY"
         else:
             action = "HOLD"
 
-        return action, snap.__dict__
+        return action, snap.__dict__, ""

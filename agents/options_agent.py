@@ -96,11 +96,16 @@ class OptionsAgent:
             return None
 
     def _fallback_signal(self, symbol: str) -> dict[str, object]:
-        # Synthetic close series keeps local dev/test e2e flows functional when market data is unavailable.
-        synthetic = pd.DataFrame(
-            {"close": [410, 410.5, 411.2, 410.7, 410.1, 409.6, 410.3, 410.9, 410.4, 410.0]}
-        )
-        signal, indicators = self.engine.generate_options_signal(synthetic)
+        # Synthetic close series (25 rows so BB window of 20 can compute).
+        # Includes a deep dip to trigger oversold RSI and a MACD crossover.
+        synthetic = pd.DataFrame({"close": [
+            410.0, 410.5, 411.2, 410.7, 410.1,
+            409.6, 408.9, 408.2, 407.5, 406.8,
+            406.1, 405.5, 405.0, 405.4, 406.0,
+            406.7, 407.4, 408.1, 408.8, 409.5,
+            410.0, 410.3, 410.6, 410.2, 409.8,
+        ]})
+        signal, indicators, filter_reason = self.engine.generate_options_signal(synthetic)
         payload = {
             "instrument_type": "options",
             "symbol": symbol,
@@ -121,6 +126,7 @@ class OptionsAgent:
             "expiration": None,
             "chain_data": {"expirations": [], "chains": {}, "fallback_mode": True},
             "meta": indicators,
+            "filter_reason": filter_reason,
             "receipt": receipt.get("receipt", "mock-receipt"),
             "approved": False,
         }
@@ -130,7 +136,7 @@ class OptionsAgent:
         if data.empty:
             return self._fallback_signal(symbol)
 
-        signal, indicators = self.engine.generate_options_signal(data)
+        signal, indicators, filter_reason = self.engine.generate_options_signal(data)
         expiration = self.get_nearest_expiration(symbol)
         chain_meta = self.get_option_chain_metadata(symbol)
 
@@ -156,6 +162,7 @@ class OptionsAgent:
             "expiration": expiration,
             "chain_data": chain_meta,
             "meta": indicators,
+            "filter_reason": filter_reason,
             "receipt": receipt.get("receipt", "mock-receipt"),
             "approved": False,
         }

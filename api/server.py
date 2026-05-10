@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from agents.crypto_agent import CryptoAgent
 from agents.forex_agent import ForexAgent
 from agents.options_agent import OptionsAgent
+from agents.signal_engine import NO_SIGNAL
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
 
 load_dotenv()
@@ -86,6 +87,8 @@ class GenerateSignalResponse(BaseModel):
     indicators: dict[str, float]
     receipt: str
     expires_in_minutes: int
+    filtered: bool
+    filter_reason: str
 
 
 class ApproveSignalRequest(BaseModel):
@@ -131,27 +134,36 @@ async def generate_signal(req: GenerateSignalRequest):
             status_code=500, detail=f"Signal generation failed: {result.get('error')}"
         )
 
+    signal_value: str = str(result.get("signal") or NO_SIGNAL)
+    filter_reason: str = result.get("filter_reason", "") or ""
+    is_filtered = signal_value == NO_SIGNAL
+
     indicators = _sanitize_indicators(result.get("meta", {}))
     chain_data = result.get("chain_data") if agent_type == "options" else None
-    ledger.add_signal(
-        signal_id=signal_id,
-        agent_type=agent_type,
-        instrument=resolved_instrument,
-        signal=result.get("signal"),
-        indicators=indicators,
-        chain_data=chain_data,
-        receipt=result.get("receipt", ""),
-        ttl_minutes=120,
-    )
+
+    # Only persist valid, actionable signals — filtered signals are discarded
+    if not is_filtered:
+        ledger.add_signal(
+            signal_id=signal_id,
+            agent_type=agent_type,
+            instrument=resolved_instrument,
+            signal=signal_value,
+            indicators=indicators,
+            chain_data=chain_data,
+            receipt=result.get("receipt", ""),
+            ttl_minutes=120,
+        )
 
     return GenerateSignalResponse(
         signal_id=signal_id,
         agent_type=agent_type,
         instrument=resolved_instrument,
-        signal=result.get("signal"),
+        signal=signal_value,
         indicators=indicators,
         receipt=result.get("receipt", ""),
-        expires_in_minutes=120,
+        expires_in_minutes=0 if is_filtered else 120,
+        filtered=is_filtered,
+        filter_reason=filter_reason,
     )
 
 
