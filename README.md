@@ -38,6 +38,17 @@ docker compose up --build
 - Audit receipt generation with gateway + fallback modes
 - Dashboard views for signal generation, approvals, orders, and analytics
 - JSON-backed ledger with lock-protected atomic writes
+- Vectorized backtesting engine with optimization, walk-forward, and Monte Carlo
+
+## Vectorized Backtesting
+
+Run a full backtest from CLI:
+
+```bash
+python -m backtesting.run --symbol EURUSD --strategy macd_rsi
+```
+
+Additional examples are in `backtesting/examples.md`.
 
 ## Architecture
 

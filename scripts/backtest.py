@@ -8,14 +8,15 @@ from backtesting.engine import BacktestConfig, BacktestEngine
 def main() -> None:
     engine = BacktestEngine()
     cfg = BacktestConfig(
-        symbols=["EURUSD=X", "BTC-USD", "SPY"],
-        timeframes=["1h", "1d"],
+        symbols=["EURUSD", "BTC-USD", "SPY"],
+        timeframe="1h",
         start="2023-01-01",
         end="2025-01-01",
+        strategy="macd_rsi",
         strategy_params={
             "rsi_buy": 35,
             "rsi_sell": 65,
-            "confidence_threshold": 60,
+            "trend_threshold": 0.003,
         },
         initial_cash=100_000.0,
         commission_bps=2.0,
@@ -24,21 +25,30 @@ def main() -> None:
         risk_per_trade=0.01,
     )
 
-    result = engine.run_backtest(cfg)
+    report = engine.run(cfg)
+    optimization = engine.optimize(
+        cfg,
+        symbol="EURUSD",
+        param_grid={
+            "rsi_buy": [30, 35, 40],
+            "rsi_sell": [60, 65, 70],
+            "trend_threshold": [0.002, 0.003, 0.004],
+        },
+    )
     walk_forward = engine.walk_forward_optimize(
         cfg,
         parameter_grid={
-            "rsi_buy": [30, 35, 40],
-            "rsi_sell": [60, 65, 70],
-            "confidence_threshold": [55, 60, 65],
+            "rsi_buy": [30, 35],
+            "rsi_sell": [65, 70],
         },
     )
 
     payload = {
-        "summary": json.loads(engine.to_summary_json(result)),
+        "summary": json.loads(engine.to_summary_json(report)),
+        "optimization_top5": optimization.head(5).to_dict(orient="records"),
         "walk_forward": walk_forward,
-        "equity_tail": result.equity_curve.tail(5).reset_index().to_dict(orient="records"),
-        "underwater_tail": result.underwater_curve.tail(5).reset_index().to_dict(orient="records"),
+        "portfolio_equity_tail": report.portfolio_equity.tail(5).reset_index().to_dict(orient="records"),
+        "portfolio_drawdown_tail": report.portfolio_drawdown.tail(5).reset_index().to_dict(orient="records"),
     }
     print(json.dumps(payload, indent=2, default=str))
 

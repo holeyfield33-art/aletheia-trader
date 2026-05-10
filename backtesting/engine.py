@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import itertools
 import json
 import math
@@ -8,194 +7,53 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-import backtrader as bt
 import numpy as np
 import pandas as pd
-import yfinance as yf
+import plotly.graph_objects as go
 
 from audit.aletheia_wrapper import AletheiaWrapper
+from backtesting.data import DataDownloader
+from backtesting.strategies import STRATEGY_REGISTRY, BaseStrategy
 
 
 @dataclass
 class BacktestConfig:
     symbols: list[str]
-    timeframes: list[str]
+    timeframe: str
     start: str
     end: str
+    strategy: str = "macd_rsi"
     strategy_params: dict[str, float | int] = field(default_factory=dict)
     initial_cash: float = 100_000.0
     commission_bps: float = 2.0
     slippage_bps: float = 1.0
     spread_bps: float = 1.5
     risk_per_trade: float = 0.01
+    allow_short: bool = True
+    use_cache: bool = True
 
 
 @dataclass
 class BacktestResult:
-    config: BacktestConfig
+    symbol: str
+    timeframe: str
     metrics: dict[str, float]
-    equity_curve: pd.DataFrame
-    underwater_curve: pd.DataFrame
-    trade_log: pd.DataFrame
-    by_instrument: dict[str, dict[str, Any]]
-    monte_carlo: dict[str, float] | None = None
-    robustness: dict[str, Any] | None = None
+    equity_curve: pd.Series
+    drawdown: pd.Series
+    monthly_returns_heatmap: pd.DataFrame
+    trades: pd.DataFrame
+    indicators: pd.DataFrame
+    parameters: dict[str, float | int]
+    monte_carlo: dict[str, float]
 
 
-class AletheiaStrategy(bt.Strategy):
-    params = dict(
-        rsi_period=14,
-        rsi_buy=35,
-        rsi_sell=65,
-        macd_fast=12,
-        macd_slow=26,
-        macd_signal=9,
-        bb_window=20,
-        bb_std=2.0,
-        atr_period=14,
-        atr_stop_mult=2.0,
-        confidence_threshold=60,
-        risk_per_trade=0.01,
-        initial_cash=100000.0,
-        correlation_penalty=0.0,
-        mtf_confirmation=True,
-        auditor=None,
-    )
-
-    def __init__(self) -> None:
-        self.rsi = bt.ind.RSI_Safe(self.data.close, period=int(self.p.rsi_period), safediv=True)
-        self.macd = bt.ind.MACD(
-            self.data.close,
-            period_me1=int(self.p.macd_fast),
-            period_me2=int(self.p.macd_slow),
-            period_signal=int(self.p.macd_signal),
-        )
-        self.bb = bt.ind.BollingerBands(
-            self.data.close,
-            period=int(self.p.bb_window),
-            devfactor=float(self.p.bb_std),
-        )
-        self.atr = bt.ind.ATR(self.data, period=int(self.p.atr_period))
-        self.adx = bt.ind.ADX(self.data, period=14)
-        self.trade_log: list[dict[str, Any]] = []
-        self.latest_confidence = 0.0
-
-    def _regime(self) -> str:
-        adx_value = float(self.adx[0]) if math.isfinite(float(self.adx[0])) else 0.0
-        return "trending" if adx_value >= 25 else "ranging"
-
-    def _mtf_confirmed(self) -> bool:
-        if not bool(self.p.mtf_confirmation):
-            return True
-        if len(self) < 30:
-            return False
-        close = np.array([float(self.data.close[-i]) for i in range(1, 21)][::-1], dtype=float)
-        slow = pd.Series(close).ewm(span=20, adjust=False).mean().iloc[-1]
-        fast = pd.Series(close).ewm(span=8, adjust=False).mean().iloc[-1]
-        macd_hist = float(self.macd.macd[0] - self.macd.signal[0])
-        return (macd_hist >= 0 and fast >= slow) or (macd_hist < 0 and fast < slow)
-
-    def _confidence(self) -> float:
-        rsi = float(self.rsi[0])
-        macd_hist = float(self.macd.macd[0] - self.macd.signal[0])
-        prev_hist = float(self.macd.macd[-1] - self.macd.signal[-1]) if len(self) > 1 else 0.0
-        price = float(self.data.close[0])
-        bb_upper = float(self.bb.top[0])
-        bb_lower = float(self.bb.bot[0])
-        bb_mid = float(self.bb.mid[0])
-
-        if min(bb_upper, bb_mid, bb_lower) <= 0:
-            return 0.0
-
-        bandwidth = (bb_upper - bb_lower) / bb_mid if bb_mid else 0.0
-        rsi_extreme = (rsi < self.p.rsi_buy) or (rsi > self.p.rsi_sell)
-        macd_cross = (prev_hist <= 0 < macd_hist) or (prev_hist >= 0 > macd_hist)
-        bb_touch = (price <= bb_lower and rsi < 45) or (price >= bb_upper and rsi > 55)
-
-        score = 45.0
-        if rsi_extreme:
-            score += 20.0
-        if macd_cross:
-            score += 15.0
-        if bb_touch:
-            score += 15.0
-        if self._mtf_confirmed():
-            score += 10.0
-        if self._regime() == "trending":
-            score += 10.0
-        if bandwidth < 0.02:
-            score -= 20.0
-        score -= min(max(float(self.p.correlation_penalty), 0.0), 1.0) * 20.0
-        return float(max(0.0, min(100.0, score)))
-
-    def _size_from_risk(self) -> float:
-        atr = float(self.atr[0]) if math.isfinite(float(self.atr[0])) else 0.0
-        if atr <= 0:
-            return 0.0
-        per_unit_risk = atr * float(self.p.atr_stop_mult)
-        risk_budget = float(self.p.initial_cash) * float(self.p.risk_per_trade)
-        return max(risk_budget / per_unit_risk, 0.0)
-
-    def next(self) -> None:
-        if len(self) < max(int(self.p.bb_window), int(self.p.rsi_period)) + 5:
-            return
-
-        conf = self._confidence()
-        self.latest_confidence = conf
-        if conf < float(self.p.confidence_threshold):
-            return
-
-        rsi = float(self.rsi[0])
-        macd_hist = float(self.macd.macd[0] - self.macd.signal[0])
-        prev_hist = float(self.macd.macd[-1] - self.macd.signal[-1]) if len(self) > 1 else 0.0
-        size = self._size_from_risk()
-        if size <= 0:
-            return
-
-        long_setup = rsi < self.p.rsi_buy and macd_hist > 0 and prev_hist <= 0
-        short_setup = rsi > self.p.rsi_sell and macd_hist < 0 and prev_hist >= 0
-
-        if not self.position:
-            if long_setup:
-                self.buy(size=size)
-            elif short_setup:
-                self.sell(size=size)
-            return
-
-        # Exit if momentum flips or setup invalidates.
-        if self.position.size > 0 and (macd_hist < 0 or rsi > 60):
-            self.close()
-        elif self.position.size < 0 and (macd_hist > 0 or rsi < 40):
-            self.close()
-
-    def notify_trade(self, trade: bt.Trade) -> None:
-        if not trade.isclosed:
-            return
-
-        dt = self.data.datetime.datetime(0)
-        entry_price = float(trade.price)
-        pnl = float(trade.pnlcomm)
-        qty = float(abs(trade.size))
-        if qty == 0 and getattr(trade, "history", None):
-            qty = float(abs(trade.history[-1].status.size))
-        side = "LONG" if bool(getattr(trade, "long", True)) else "SHORT"
-
-        entry = {
-            "datetime": dt.isoformat(),
-            "side": side,
-            "qty": qty,
-            "entry_price": entry_price,
-            "pnl": pnl,
-            "confidence": float(self.latest_confidence),
-            "regime": self._regime(),
-        }
-
-        auditor: AletheiaWrapper | None = self.p.auditor
-        if auditor is not None:
-            receipt = auditor.audit(action="backtest_trade", payload=entry)
-            entry["receipt"] = receipt.get("receipt", "mock-receipt")
-
-        self.trade_log.append(entry)
+@dataclass
+class BacktestRunReport:
+    config: BacktestConfig
+    results: dict[str, BacktestResult]
+    portfolio_equity: pd.Series
+    portfolio_drawdown: pd.Series
+    portfolio_metrics: dict[str, float]
 
 
 class BacktestEngine:
@@ -205,214 +63,201 @@ class BacktestEngine:
         gateway_url: str | None = None,
         api_key: str | None = None,
     ) -> None:
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.downloader = DataDownloader(cache_dir=cache_dir)
         self.auditor = AletheiaWrapper(gateway_url=gateway_url, api_key=api_key)
 
-    def fetch_ohlcv(
-        self,
-        symbol: str,
-        timeframe: str,
-        start: str,
-        end: str,
-        use_cache: bool = True,
-    ) -> pd.DataFrame:
-        cache_key = hashlib.sha1(f"{symbol}|{timeframe}|{start}|{end}".encode()).hexdigest()[:16]
-        cache_file = self.cache_dir / f"{symbol.replace('/', '_')}_{timeframe}_{cache_key}.csv"
+    def run(self, config: BacktestConfig) -> BacktestRunReport:
+        results: dict[str, BacktestResult] = {}
+        equity_curves: list[pd.Series] = []
 
-        if use_cache and cache_file.exists():
-            cached = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-            cached.index = pd.to_datetime(cached.index, utc=True)
-            return cached
-
-        data = yf.download(
-            symbol,
-            interval=timeframe,
-            start=start,
-            end=end,
-            auto_adjust=False,
-            progress=False,
-        )
-        if data.empty:
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-        data = data.rename(columns={
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        })
-        for col in ["open", "high", "low", "close", "volume"]:
-            if col not in data.columns:
-                data[col] = 0.0
-        out = data[["open", "high", "low", "close", "volume"]].dropna().copy()
-        out.index = pd.to_datetime(out.index, utc=True)
-        if use_cache and not out.empty:
-            out.to_csv(cache_file)
-        return out
-
-    def _run_single(
-        self,
-        data: pd.DataFrame,
-        config: BacktestConfig,
-        strategy_params: dict[str, float | int],
-        correlation_penalty: float = 0.0,
-    ) -> tuple[pd.Series, pd.DataFrame, dict[str, float]]:
-        cerebro = bt.Cerebro(stdstats=False)
-        cerebro.broker.setcash(float(config.initial_cash))
-
-        total_commission_bps = float(config.commission_bps) + float(config.spread_bps)
-        commission = total_commission_bps / 10_000.0
-        slippage = float(config.slippage_bps) / 10_000.0
-        cerebro.broker.setcommission(commission=commission)
-        cerebro.broker.set_slippage_perc(perc=slippage)
-
-        bt_data = bt.feeds.PandasData(
-            dataname=data.rename(columns=str.capitalize)
-            .rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
-        )
-        cerebro.adddata(bt_data)
-
-        params = {
-            "risk_per_trade": float(config.risk_per_trade),
-            "initial_cash": float(config.initial_cash),
-            "correlation_penalty": float(correlation_penalty),
-            "auditor": self.auditor,
-        }
-        params.update(strategy_params)
-
-        cerebro.addstrategy(AletheiaStrategy, **params)
-        cerebro.addanalyzer(bt.analyzers.TimeReturn, _name="returns")
-        strat = cerebro.run()[0]
-
-        returns_dict = strat.analyzers.returns.get_analysis()
-        if not returns_dict:
-            returns = pd.Series([0.0], index=[data.index[-1]])
-        else:
-            returns = pd.Series(returns_dict)
-            returns.index = pd.to_datetime(returns.index, utc=True)
-            returns = returns.sort_index()
-
-        equity = float(config.initial_cash) * (1.0 + returns).cumprod()
-        equity.name = "equity"
-        trades = pd.DataFrame(strat.trade_log)
-        if trades.empty:
-            trades = pd.DataFrame(columns=["datetime", "side", "qty", "entry_price", "pnl", "confidence", "regime", "receipt"])
-
-        trade_returns = np.array([], dtype=float)
-        if not trades.empty:
-            trade_returns = trades["pnl"].astype(float).to_numpy() / float(config.initial_cash)
-
-        return equity, trades, self._compute_metrics(equity, trade_returns)
-
-    def run_backtest(self, config: BacktestConfig) -> BacktestResult:
-        all_equities: list[pd.Series] = []
-        all_trades: list[pd.DataFrame] = []
-        by_instrument: dict[str, dict[str, Any]] = {}
-        returns_by_leg: list[pd.Series] = []
-
-        for symbol, timeframe in itertools.product(config.symbols, config.timeframes):
-            data = self.fetch_ohlcv(symbol, timeframe, config.start, config.end)
+        for symbol in config.symbols:
+            data = self.downloader.download(
+                symbol=symbol,
+                timeframe=config.timeframe,
+                start=config.start,
+                end=config.end,
+                use_cache=config.use_cache,
+            )
             if data.empty:
-                by_instrument[f"{symbol}:{timeframe}"] = {"status": "no_data"}
                 continue
 
-            corr_penalty = self._portfolio_correlation_penalty(data, returns_by_leg)
-            equity, trades, metrics = self._run_single(
-                data=data,
+            result = self._run_single(symbol=symbol, data=data, config=config)
+            results[symbol] = result
+            equity_curves.append(result.equity_curve.rename(symbol))
+
+        if not equity_curves:
+            idx = pd.DatetimeIndex([pd.Timestamp.utcnow()])
+            portfolio_equity = pd.Series([config.initial_cash], index=idx, name="equity")
+            portfolio_drawdown = pd.Series([0.0], index=idx, name="drawdown")
+            portfolio_metrics = self._compute_metrics(
+                equity=portfolio_equity,
+                returns=portfolio_equity.pct_change().fillna(0.0),
+                trade_returns=np.array([], dtype=float),
+                timeframe=config.timeframe,
+            )
+            return BacktestRunReport(
                 config=config,
-                strategy_params=config.strategy_params,
-                correlation_penalty=corr_penalty,
+                results=results,
+                portfolio_equity=portfolio_equity,
+                portfolio_drawdown=portfolio_drawdown,
+                portfolio_metrics=portfolio_metrics,
             )
 
-            leg_key = f"{symbol}:{timeframe}"
-            leg_returns = equity.pct_change().fillna(0.0)
-            returns_by_leg.append(leg_returns)
-            all_equities.append(equity.rename(leg_key))
-            all_trades.append(trades.assign(symbol=symbol, timeframe=timeframe))
-            by_instrument[leg_key] = {
-                "rows": int(len(data)),
-                "metrics": metrics,
-                "corr_penalty": float(corr_penalty),
-            }
+        joined = pd.concat(equity_curves, axis=1).ffill().dropna(how="all")
+        portfolio_equity = joined.mean(axis=1).rename("equity")
+        portfolio_returns = portfolio_equity.pct_change().fillna(0.0)
+        portfolio_drawdown = (portfolio_equity / portfolio_equity.cummax() - 1.0).rename("drawdown")
 
-        if not all_equities:
-            empty_curve = pd.DataFrame({"equity": [config.initial_cash]})
-            empty_underwater = pd.DataFrame({"underwater": [0.0]})
-            return BacktestResult(
-                config=config,
-                metrics={k: 0.0 for k in [
-                    "total_return", "sharpe", "sortino", "max_drawdown", "calmar", "win_rate", "profit_factor", "expectancy"
-                ]},
-                equity_curve=empty_curve,
-                underwater_curve=empty_underwater,
-                trade_log=pd.DataFrame(),
-                by_instrument=by_instrument,
-            )
+        all_trade_returns = []
+        for result in results.values():
+            if not result.trades.empty:
+                all_trade_returns.extend(result.trades["trade_return"].astype(float).tolist())
 
-        joined = pd.concat(all_equities, axis=1).sort_index().ffill().dropna(how="all")
-        portfolio_equity = joined.mean(axis=1).rename("equity").to_frame()
-        underwater = (portfolio_equity["equity"] / portfolio_equity["equity"].cummax() - 1.0).rename("underwater").to_frame()
-
-        trades_df = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame()
-        trade_returns = (
-            trades_df["pnl"].astype(float).to_numpy() / float(config.initial_cash)
-            if not trades_df.empty
-            else np.array([], dtype=float)
+        portfolio_metrics = self._compute_metrics(
+            equity=portfolio_equity,
+            returns=portfolio_returns,
+            trade_returns=np.array(all_trade_returns, dtype=float),
+            timeframe=config.timeframe,
         )
-        metrics = self._compute_metrics(portfolio_equity["equity"], trade_returns)
 
-        monte = self.monte_carlo_simulation(trade_returns)
-        robustness = self.parameter_perturbation_test(config)
+        self.auditor.audit(
+            action="backtest_summary",
+            payload={
+                "symbols": list(results.keys()),
+                "timeframe": config.timeframe,
+                "start": config.start,
+                "end": config.end,
+                "strategy": config.strategy,
+                "metrics": portfolio_metrics,
+            },
+        )
 
-        return BacktestResult(
+        return BacktestRunReport(
             config=config,
-            metrics=metrics,
-            equity_curve=portfolio_equity,
-            underwater_curve=underwater,
-            trade_log=trades_df,
-            by_instrument=by_instrument,
-            monte_carlo=monte,
-            robustness=robustness,
+            results=results,
+            portfolio_equity=portfolio_equity,
+            portfolio_drawdown=portfolio_drawdown,
+            portfolio_metrics=portfolio_metrics,
         )
 
-    def walk_forward_optimize(
-        self,
-        config: BacktestConfig,
-        parameter_grid: dict[str, list[int | float]],
-        train_bars: int = 250,
-        test_bars: int = 100,
-    ) -> dict[str, Any]:
-        if not config.symbols or not config.timeframes:
-            return {"windows": [], "summary": {"avg_oos_sharpe": 0.0}}
+    def run_backtest(self, config: BacktestConfig) -> BacktestResult:
+        if not config.symbols:
+            raise ValueError("BacktestConfig.symbols must contain at least one symbol")
 
         symbol = config.symbols[0]
-        timeframe = config.timeframes[0]
-        data = self.fetch_ohlcv(symbol, timeframe, config.start, config.end)
+        data = self.downloader.download(
+            symbol=symbol,
+            timeframe=config.timeframe,
+            start=config.start,
+            end=config.end,
+            use_cache=config.use_cache,
+        )
+        if data.empty:
+            idx = pd.DatetimeIndex([pd.Timestamp.utcnow()])
+            empty = pd.Series([config.initial_cash], index=idx)
+            return BacktestResult(
+                symbol=symbol,
+                timeframe=config.timeframe,
+                metrics={
+                    "total_return": 0.0,
+                    "sharpe": 0.0,
+                    "sortino": 0.0,
+                    "calmar": 0.0,
+                    "max_drawdown": 0.0,
+                    "max_drawdown_duration_bars": 0.0,
+                    "win_rate": 0.0,
+                    "profit_factor": 0.0,
+                    "expectancy": 0.0,
+                },
+                equity_curve=empty,
+                drawdown=pd.Series([0.0], index=idx),
+                monthly_returns_heatmap=pd.DataFrame(),
+                trades=pd.DataFrame(),
+                indicators=pd.DataFrame(),
+                parameters=config.strategy_params,
+                monte_carlo={
+                    "mc_p5_return": 0.0,
+                    "mc_p50_return": 0.0,
+                    "mc_p95_return": 0.0,
+                    "mc_prob_loss": 0.0,
+                },
+            )
+        return self._run_single(symbol=symbol, data=data, config=config)
+
+    def optimize(
+        self,
+        config: BacktestConfig,
+        symbol: str,
+        param_grid: dict[str, list[int | float]],
+        objective: str = "sharpe",
+    ) -> pd.DataFrame:
+        data = self.downloader.download(
+            symbol=symbol,
+            timeframe=config.timeframe,
+            start=config.start,
+            end=config.end,
+            use_cache=config.use_cache,
+        )
+        if data.empty:
+            return pd.DataFrame()
+
+        keys = list(param_grid.keys())
+        rows: list[dict[str, Any]] = []
+        for combo in itertools.product(*param_grid.values()):
+            params = {**config.strategy_params, **dict(zip(keys, combo))}
+            res = self._run_from_data(symbol=symbol, data=data, config=config, strategy_params=params)
+            row: dict[str, Any] = {"objective": float(res.metrics.get(objective, 0.0))}
+            row.update(params)
+            for metric_key in ["sharpe", "sortino", "calmar", "max_drawdown", "win_rate", "profit_factor"]:
+                row[metric_key] = float(res.metrics.get(metric_key, 0.0))
+            rows.append(row)
+
+        out = pd.DataFrame(rows)
+        if out.empty:
+            return out
+        return out.sort_values(by="objective", ascending=False).reset_index(drop=True)
+
+    def walk_forward(
+        self,
+        config: BacktestConfig,
+        symbol: str,
+        param_grid: dict[str, list[int | float]],
+        train_bars: int = 252,
+        test_bars: int = 126,
+        step_bars: int = 126,
+    ) -> dict[str, Any]:
+        data = self.downloader.download(
+            symbol=symbol,
+            timeframe=config.timeframe,
+            start=config.start,
+            end=config.end,
+            use_cache=config.use_cache,
+        )
         if data.empty or len(data) < train_bars + test_bars:
-            return {"windows": [], "summary": {"avg_oos_sharpe": 0.0}}
+            return {"windows": [], "summary": {"avg_oos_sharpe": 0.0, "count": 0}}
 
-        keys = list(parameter_grid.keys())
-        combos = list(itertools.product(*parameter_grid.values()))
         windows: list[dict[str, Any]] = []
-
         i = 0
         while i + train_bars + test_bars <= len(data):
             train_df = data.iloc[i : i + train_bars]
             test_df = data.iloc[i + train_bars : i + train_bars + test_bars]
 
-            best_score = -1e9
-            best_params: dict[str, int | float] = {}
-            for combo in combos:
-                candidate = dict(zip(keys, combo))
-                _, _, train_metrics = self._run_single(train_df, config, {**config.strategy_params, **candidate})
-                score = float(train_metrics.get("sharpe", -1e9))
-                if score > best_score:
-                    best_score = score
-                    best_params = candidate
+            opt = self._optimize_on_data(config, symbol, train_df, param_grid)
+            if opt.empty:
+                break
+            best = opt.iloc[0].to_dict()
+            best_params = {
+                k: best[k]
+                for k in param_grid.keys()
+                if k in best
+            }
+            test_res = self._run_from_data(
+                symbol=symbol,
+                data=test_df,
+                config=config,
+                strategy_params={**config.strategy_params, **best_params},
+            )
 
-            _, _, test_metrics = self._run_single(test_df, config, {**config.strategy_params, **best_params})
             windows.append(
                 {
                     "train_start": str(train_df.index[0]),
@@ -420,22 +265,215 @@ class BacktestEngine:
                     "test_start": str(test_df.index[0]),
                     "test_end": str(test_df.index[-1]),
                     "best_params": best_params,
-                    "train_sharpe": float(best_score),
-                    "test_sharpe": float(test_metrics.get("sharpe", 0.0)),
-                    "test_total_return": float(test_metrics.get("total_return", 0.0)),
+                    "test_sharpe": float(test_res.metrics.get("sharpe", 0.0)),
+                    "test_total_return": float(test_res.metrics.get("total_return", 0.0)),
                 }
             )
 
-            i += test_bars
+            i += step_bars
 
         avg_oos_sharpe = float(np.mean([w["test_sharpe"] for w in windows])) if windows else 0.0
-        return {"windows": windows, "summary": {"avg_oos_sharpe": avg_oos_sharpe, "count": len(windows)}}
+        return {
+            "windows": windows,
+            "summary": {
+                "avg_oos_sharpe": avg_oos_sharpe,
+                "count": len(windows),
+            },
+        }
 
-    def monte_carlo_simulation(
+    def walk_forward_optimize(
         self,
+        config: BacktestConfig,
+        parameter_grid: dict[str, list[int | float]],
+        train_bars: int = 252,
+        test_bars: int = 126,
+    ) -> dict[str, Any]:
+        return self.walk_forward(
+            config=config,
+            symbol=config.symbols[0],
+            param_grid=parameter_grid,
+            train_bars=train_bars,
+            test_bars=test_bars,
+            step_bars=test_bars,
+        )
+
+    def build_equity_curve_figure(self, result: BacktestResult) -> go.Figure:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=result.equity_curve.index,
+                y=result.equity_curve.values,
+                mode="lines",
+                name="Equity",
+            )
+        )
+        fig.update_layout(
+            title=f"Equity Curve: {result.symbol} ({result.timeframe})",
+            xaxis_title="Time",
+            yaxis_title="Equity",
+            template="plotly_dark",
+            height=450,
+        )
+        return fig
+
+    def build_drawdown_figure(self, result: BacktestResult) -> go.Figure:
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=result.drawdown.index,
+                y=result.drawdown.values,
+                mode="lines",
+                fill="tozeroy",
+                name="Drawdown",
+            )
+        )
+        fig.update_layout(
+            title=f"Drawdown: {result.symbol} ({result.timeframe})",
+            xaxis_title="Time",
+            yaxis_title="Drawdown",
+            template="plotly_dark",
+            height=350,
+        )
+        return fig
+
+    @staticmethod
+    def to_summary_json(report: BacktestRunReport) -> str:
+        payload = {
+            "config": asdict(report.config),
+            "portfolio_metrics": report.portfolio_metrics,
+            "symbols": {
+                symbol: {
+                    "metrics": result.metrics,
+                    "trade_count": int(len(result.trades)),
+                    "monte_carlo": result.monte_carlo,
+                }
+                for symbol, result in report.results.items()
+            },
+        }
+        return json.dumps(payload, indent=2, default=str)
+
+    def _run_single(self, symbol: str, data: pd.DataFrame, config: BacktestConfig) -> BacktestResult:
+        return self._run_from_data(
+            symbol=symbol,
+            data=data,
+            config=config,
+            strategy_params=config.strategy_params,
+        )
+
+    def _run_from_data(
+        self,
+        symbol: str,
+        data: pd.DataFrame,
+        config: BacktestConfig,
+        strategy_params: dict[str, float | int],
+    ) -> BacktestResult:
+        strategy_cls = STRATEGY_REGISTRY.get(config.strategy)
+        if strategy_cls is None:
+            raise ValueError(f"Unknown strategy '{config.strategy}'. Available: {sorted(STRATEGY_REGISTRY)}")
+
+        strategy: BaseStrategy = strategy_cls()
+        merged_params = {**strategy_params}
+        merged_params.setdefault("risk_per_trade", config.risk_per_trade)
+
+        pack = strategy.generate(data, merged_params)
+        position = self._build_position_series(
+            entries=pack.entries,
+            exits=pack.exits,
+            short_entries=pack.short_entries,
+            short_exits=pack.short_exits,
+            allow_short=config.allow_short,
+        )
+
+        close = data["close"].astype(float)
+        asset_returns = close.pct_change().fillna(0.0)
+        prior_position = position.shift(1).fillna(0.0)
+
+        size_pct = pack.size_pct.reindex(close.index).fillna(0.0).clip(lower=0.0, upper=1.0)
+        gross_returns = prior_position * asset_returns * size_pct
+
+        total_cost_rate = (
+            float(config.commission_bps) + float(config.spread_bps) + float(config.slippage_bps)
+        ) / 10_000.0
+        turnover = position.diff().abs().fillna(position.abs()) * size_pct
+        costs = turnover * total_cost_rate
+        strategy_returns = gross_returns - costs
+
+        equity = (1.0 + strategy_returns).cumprod() * float(config.initial_cash)
+        drawdown = (equity / equity.cummax() - 1.0).fillna(0.0)
+
+        trades = self._extract_trade_log(
+            close=close,
+            position=position,
+            size_pct=size_pct,
+            returns=strategy_returns,
+            initial_cash=float(config.initial_cash),
+        )
+        trade_returns = trades["trade_return"].astype(float).to_numpy() if not trades.empty else np.array([], dtype=float)
+
+        metrics = self._compute_metrics(
+            equity=equity,
+            returns=strategy_returns,
+            trade_returns=trade_returns,
+            timeframe=config.timeframe,
+        )
+        monthly_heatmap = self._monthly_returns_heatmap(strategy_returns)
+        monte = self.monte_carlo_simulation(trade_returns)
+
+        indicator_frame = pd.DataFrame({k: v for k, v in pack.indicators.items()})
+
+        self.auditor.audit(
+            action="backtest_symbol",
+            payload={
+                "symbol": symbol,
+                "strategy": config.strategy,
+                "timeframe": config.timeframe,
+                "metrics": metrics,
+                "trade_count": int(len(trades)),
+            },
+        )
+
+        return BacktestResult(
+            symbol=symbol,
+            timeframe=config.timeframe,
+            metrics=metrics,
+            equity_curve=equity,
+            drawdown=drawdown,
+            monthly_returns_heatmap=monthly_heatmap,
+            trades=trades,
+            indicators=indicator_frame,
+            parameters=merged_params,
+            monte_carlo=monte,
+        )
+
+    def _optimize_on_data(
+        self,
+        config: BacktestConfig,
+        symbol: str,
+        data: pd.DataFrame,
+        param_grid: dict[str, list[int | float]],
+    ) -> pd.DataFrame:
+        keys = list(param_grid.keys())
+        rows: list[dict[str, Any]] = []
+
+        for combo in itertools.product(*param_grid.values()):
+            params = {**config.strategy_params, **dict(zip(keys, combo))}
+            res = self._run_from_data(symbol=symbol, data=data, config=config, strategy_params=params)
+            row: dict[str, Any] = {"objective": float(res.metrics.get("sharpe", 0.0))}
+            row.update(params)
+            row["total_return"] = float(res.metrics.get("total_return", 0.0))
+            row["sharpe"] = float(res.metrics.get("sharpe", 0.0))
+            row["max_drawdown"] = float(res.metrics.get("max_drawdown", 0.0))
+            rows.append(row)
+
+        out = pd.DataFrame(rows)
+        if out.empty:
+            return out
+        return out.sort_values(by="objective", ascending=False).reset_index(drop=True)
+
+    @staticmethod
+    def monte_carlo_simulation(
         trade_returns: np.ndarray,
         n_sims: int = 1000,
-        horizon: int = 200,
     ) -> dict[str, float]:
         if trade_returns.size == 0:
             return {
@@ -445,125 +483,146 @@ class BacktestEngine:
                 "mc_prob_loss": 0.0,
             }
 
-        sims = []
-        for _ in range(n_sims):
-            path = np.random.choice(trade_returns, size=horizon, replace=True)
-            sims.append(float(np.prod(1.0 + path) - 1.0))
+        finals = np.zeros(n_sims, dtype=float)
+        for i in range(n_sims):
+            shuffled = np.random.permutation(trade_returns)
+            finals[i] = float(np.prod(1.0 + shuffled) - 1.0)
 
-        arr = np.array(sims)
         return {
-            "mc_p5_return": float(np.percentile(arr, 5)),
-            "mc_p50_return": float(np.percentile(arr, 50)),
-            "mc_p95_return": float(np.percentile(arr, 95)),
-            "mc_prob_loss": float((arr < 0).mean()),
-        }
-
-    def parameter_perturbation_test(
-        self,
-        config: BacktestConfig,
-        trials: int = 30,
-        perturb_pct: float = 0.20,
-    ) -> dict[str, Any]:
-        if not config.symbols or not config.timeframes:
-            return {"trials": 0, "robust_ratio": 0.0, "avg_sharpe": 0.0}
-
-        symbol = config.symbols[0]
-        timeframe = config.timeframes[0]
-        data = self.fetch_ohlcv(symbol, timeframe, config.start, config.end)
-        if data.empty:
-            return {"trials": 0, "robust_ratio": 0.0, "avg_sharpe": 0.0}
-
-        base = config.strategy_params or {"rsi_buy": 35, "rsi_sell": 65}
-        sharpes: list[float] = []
-
-        for _ in range(trials):
-            perturbed: dict[str, int | float] = {}
-            for k, v in base.items():
-                if isinstance(v, (int, float)):
-                    lo = float(v) * (1.0 - perturb_pct)
-                    hi = float(v) * (1.0 + perturb_pct)
-                    sample = float(np.random.uniform(lo, hi))
-                    perturbed[k] = int(round(sample)) if isinstance(v, int) else sample
-                else:
-                    perturbed[k] = v
-
-            _, _, metrics = self._run_single(data, config, perturbed)
-            sharpes.append(float(metrics.get("sharpe", 0.0)))
-
-        sharpe_arr = np.array(sharpes)
-        return {
-            "trials": int(trials),
-            "robust_ratio": float((sharpe_arr > 0).mean()) if sharpe_arr.size else 0.0,
-            "avg_sharpe": float(sharpe_arr.mean()) if sharpe_arr.size else 0.0,
-            "min_sharpe": float(sharpe_arr.min()) if sharpe_arr.size else 0.0,
-            "max_sharpe": float(sharpe_arr.max()) if sharpe_arr.size else 0.0,
+            "mc_p5_return": float(np.percentile(finals, 5)),
+            "mc_p50_return": float(np.percentile(finals, 50)),
+            "mc_p95_return": float(np.percentile(finals, 95)),
+            "mc_prob_loss": float((finals < 0).mean()),
         }
 
     @staticmethod
-    def to_summary_json(result: BacktestResult) -> str:
-        payload = {
-            "config": asdict(result.config),
-            "metrics": result.metrics,
-            "by_instrument": result.by_instrument,
-            "monte_carlo": result.monte_carlo,
-            "robustness": result.robustness,
-            "equity_points": int(len(result.equity_curve)),
-            "trade_count": int(len(result.trade_log)),
-        }
-        return json.dumps(payload, indent=2)
+    def _build_position_series(
+        entries: pd.Series,
+        exits: pd.Series,
+        short_entries: pd.Series,
+        short_exits: pd.Series,
+        allow_short: bool,
+    ) -> pd.Series:
+        idx = entries.index
+        pos = np.zeros(len(idx), dtype=float)
+        current = 0.0
+
+        e = entries.fillna(False).to_numpy(dtype=bool)
+        x = exits.fillna(False).to_numpy(dtype=bool)
+        se = short_entries.fillna(False).to_numpy(dtype=bool)
+        sx = short_exits.fillna(False).to_numpy(dtype=bool)
+
+        for i in range(len(idx)):
+            if current == 0.0:
+                if e[i]:
+                    current = 1.0
+                elif allow_short and se[i]:
+                    current = -1.0
+            elif current > 0:
+                if x[i]:
+                    current = 0.0
+                elif allow_short and se[i]:
+                    current = -1.0
+            else:
+                if sx[i]:
+                    current = 0.0
+                elif e[i]:
+                    current = 1.0
+            pos[i] = current
+
+        return pd.Series(pos, index=idx, name="position")
 
     @staticmethod
-    def _portfolio_correlation_penalty(
-        candidate_data: pd.DataFrame,
-        existing_returns: list[pd.Series],
-    ) -> float:
-        if not existing_returns:
-            return 0.0
-        cand_ret = candidate_data["close"].pct_change().dropna()
-        if cand_ret.empty:
-            return 0.0
+    def _extract_trade_log(
+        close: pd.Series,
+        position: pd.Series,
+        size_pct: pd.Series,
+        returns: pd.Series,
+        initial_cash: float,
+    ) -> pd.DataFrame:
+        records: list[dict[str, Any]] = []
+        current_side = 0.0
+        entry_price = 0.0
+        entry_time: pd.Timestamp | None = None
+        entry_size = 0.0
 
-        corrs = []
-        for series in existing_returns:
-            aligned = pd.concat([cand_ret, series], axis=1).dropna()
-            if len(aligned) < 20:
+        for ts, pos in position.items():
+            prev_side = current_side
+            if prev_side == 0.0 and pos != 0.0:
+                current_side = float(pos)
+                entry_price = float(close.loc[ts])
+                entry_time = pd.Timestamp(ts)
+                entry_size = float(size_pct.loc[ts])
                 continue
-            corrs.append(abs(float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))))
 
-        if not corrs:
-            return 0.0
-        return float(min(1.0, np.mean(corrs)))
+            if prev_side != 0.0 and pos != prev_side:
+                exit_price = float(close.loc[ts])
+                if entry_time is None or entry_price <= 0:
+                    current_side = float(pos)
+                    entry_price = exit_price
+                    entry_time = pd.Timestamp(ts)
+                    entry_size = float(size_pct.loc[ts])
+                    continue
+
+                direction = 1.0 if prev_side > 0 else -1.0
+                trade_return = direction * ((exit_price / entry_price) - 1.0) * max(entry_size, 0.0)
+                pnl = initial_cash * trade_return
+                held_returns = returns.loc[(returns.index >= entry_time) & (returns.index <= ts)]
+                bars = int(len(held_returns))
+
+                records.append(
+                    {
+                        "entry_time": str(entry_time),
+                        "exit_time": str(pd.Timestamp(ts)),
+                        "side": "LONG" if prev_side > 0 else "SHORT",
+                        "entry_price": entry_price,
+                        "exit_price": exit_price,
+                        "size_pct": entry_size,
+                        "trade_return": float(trade_return),
+                        "pnl": float(pnl),
+                        "bars": bars,
+                    }
+                )
+
+                current_side = float(pos)
+                if current_side != 0.0:
+                    entry_price = exit_price
+                    entry_time = pd.Timestamp(ts)
+                    entry_size = float(size_pct.loc[ts])
+                else:
+                    entry_price = 0.0
+                    entry_time = None
+                    entry_size = 0.0
+
+        return pd.DataFrame(records)
 
     @staticmethod
-    def _compute_metrics(equity: pd.Series, trade_returns: np.ndarray) -> dict[str, float]:
-        returns = equity.pct_change().dropna()
-        if returns.empty:
-            return {
-                "total_return": 0.0,
-                "sharpe": 0.0,
-                "sortino": 0.0,
-                "max_drawdown": 0.0,
-                "calmar": 0.0,
-                "win_rate": 0.0,
-                "profit_factor": 0.0,
-                "expectancy": 0.0,
-            }
-
-        annualizer = math.sqrt(252)
-        mean = float(returns.mean())
-        std = float(returns.std())
+    def _compute_metrics(
+        equity: pd.Series,
+        returns: pd.Series,
+        trade_returns: np.ndarray,
+        timeframe: str,
+    ) -> dict[str, float]:
+        periods = BacktestEngine._periods_per_year(timeframe)
+        avg = float(returns.mean())
+        vol = float(returns.std())
         downside = returns[returns < 0]
-        downside_std = float(downside.std()) if not downside.empty else 0.0
+        downside_vol = float(downside.std()) if len(downside) else 0.0
 
-        sharpe = (mean / std * annualizer) if std > 0 else 0.0
-        sortino = (mean / downside_std * annualizer) if downside_std > 0 else 0.0
+        sharpe = avg / vol * math.sqrt(periods) if vol > 0 else 0.0
+        sortino = avg / downside_vol * math.sqrt(periods) if downside_vol > 0 else 0.0
 
-        total_return = float(equity.iloc[-1] / equity.iloc[0] - 1.0)
-        drawdown = equity / equity.cummax() - 1.0
-        max_dd = float(drawdown.min())
-        calmar = (total_return / abs(max_dd)) if max_dd < 0 else 0.0
+        total_return = float(equity.iloc[-1] / equity.iloc[0] - 1.0) if len(equity) else 0.0
+        max_dd = float((equity / equity.cummax() - 1.0).min()) if len(equity) else 0.0
+        annual_return = (
+            (float(equity.iloc[-1] / equity.iloc[0])) ** (periods / max(len(equity), 1)) - 1.0
+            if len(equity) > 1 and equity.iloc[0] > 0
+            else 0.0
+        )
+        calmar = annual_return / abs(max_dd) if max_dd < 0 else 0.0
+        max_dd_duration = float(BacktestEngine._max_drawdown_duration((equity / equity.cummax() - 1.0)))
 
-        if trade_returns.size:
+        if trade_returns.size > 0:
             wins = trade_returns[trade_returns > 0]
             losses = trade_returns[trade_returns < 0]
             win_rate = float((trade_returns > 0).mean())
@@ -580,9 +639,50 @@ class BacktestEngine:
             "total_return": total_return,
             "sharpe": float(sharpe),
             "sortino": float(sortino),
-            "max_drawdown": max_dd,
             "calmar": float(calmar),
+            "max_drawdown": float(max_dd),
+            "max_drawdown_duration_bars": max_dd_duration,
             "win_rate": win_rate,
             "profit_factor": float(profit_factor),
             "expectancy": expectancy,
         }
+
+    @staticmethod
+    def _monthly_returns_heatmap(returns: pd.Series) -> pd.DataFrame:
+        if returns.empty:
+            return pd.DataFrame()
+        monthly = (1.0 + returns).resample("ME").prod() - 1.0
+        monthly_df = monthly.to_frame("ret")
+        monthly_df["year"] = monthly_df.index.year
+        monthly_df["month"] = monthly_df.index.strftime("%b")
+        month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        heatmap = monthly_df.pivot(index="year", columns="month", values="ret")
+        return heatmap.reindex(columns=month_order)
+
+    @staticmethod
+    def _max_drawdown_duration(drawdown: pd.Series) -> int:
+        in_dd = drawdown < 0
+        max_len = 0
+        cur = 0
+        for flag in in_dd.tolist():
+            if flag:
+                cur += 1
+                max_len = max(max_len, cur)
+            else:
+                cur = 0
+        return max_len
+
+    @staticmethod
+    def _periods_per_year(timeframe: str) -> int:
+        tf = timeframe.lower()
+        if tf.endswith("m"):
+            minutes = int(tf[:-1]) if tf[:-1].isdigit() else 60
+            return int((24 * 60 / minutes) * 252)
+        if tf.endswith("h"):
+            hours = int(tf[:-1]) if tf[:-1].isdigit() else 1
+            return int((24 / hours) * 252)
+        if tf.endswith("d"):
+            return 252
+        if tf.endswith("wk") or tf.endswith("w"):
+            return 52
+        return 252
