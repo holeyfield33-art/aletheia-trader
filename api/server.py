@@ -8,11 +8,12 @@ from enum import Enum
 from typing import Any, Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from agents.crypto_agent import CryptoAgent
 from agents.forex_agent import ForexAgent
+from agents.market_watcher import MarketWatcher
 from agents.options_agent import OptionsAgent
 from agents.signal_engine import NO_SIGNAL
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
@@ -23,6 +24,7 @@ app = FastAPI(title="Aletheia Trader API", version="1.0.1")
 ledger = SignalAndOrderLedger()
 forex_agent = ForexAgent()
 options_agent = OptionsAgent()
+market_watcher = MarketWatcher(ledger=ledger)
 
 
 class OrderStatus(str, Enum):
@@ -114,6 +116,13 @@ class RejectSignalRequest(BaseModel):
 class CloseOrderRequest(BaseModel):
     order_id: str = Field(min_length=3, max_length=64)
     exit_price: float = Field(gt=0)
+
+
+class MarketWatcherStartRequest(BaseModel):
+    symbols: list[str] | None = None
+    timeframe: str = Field(default="1h", min_length=1, max_length=8)
+    lookback_period: str = Field(default="30d", min_length=2, max_length=10)
+    poll_interval_seconds: float = Field(default=60.0, gt=0)
 
 
 @app.get("/health")
@@ -285,6 +294,52 @@ async def get_pnl():
             "timestamp": datetime.now(UTC).isoformat(),
         }
     )
+
+
+@app.get("/v1/market-watcher/status")
+async def get_market_watcher_status():
+    """Get MarketWatcher lifecycle and diagnostic status."""
+    return _json_safe(market_watcher.status())
+
+
+@app.get("/v1/market-watcher/history")
+async def get_market_watcher_history(limit: int = Query(default=30, ge=1, le=500)):
+    """Get historical MarketWatcher cycle snapshots."""
+    history = market_watcher.history()
+    return _json_safe({"count": min(limit, len(history)), "history": history[-limit:]})
+
+
+@app.post("/v1/market-watcher/start")
+async def start_market_watcher(req: MarketWatcherStartRequest):
+    """Configure and start the MarketWatcher background loop."""
+    symbols = req.symbols or market_watcher.config.symbols
+    market_watcher.reconfigure(
+        symbols=[_validate_instrument(symbol) for symbol in symbols],
+        timeframe=req.timeframe,
+        poll_interval_seconds=req.poll_interval_seconds,
+        lookback_period=req.lookback_period,
+    )
+    status = market_watcher.start()
+    return _json_safe(status)
+
+
+@app.post("/v1/market-watcher/stop")
+async def stop_market_watcher():
+    """Stop the MarketWatcher background loop."""
+    return _json_safe(market_watcher.stop())
+
+
+@app.post("/v1/market-watcher/run-once")
+async def run_market_watcher_once(req: MarketWatcherStartRequest):
+    """Run a single MarketWatcher cycle without leaving the background loop enabled."""
+    symbols = req.symbols or market_watcher.config.symbols
+    market_watcher.reconfigure(
+        symbols=[_validate_instrument(symbol) for symbol in symbols],
+        timeframe=req.timeframe,
+        poll_interval_seconds=req.poll_interval_seconds,
+        lookback_period=req.lookback_period,
+    )
+    return _json_safe(market_watcher.run_cycle())
 
 
 if __name__ == "__main__":

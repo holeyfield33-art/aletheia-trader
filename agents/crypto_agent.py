@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 
 import pandas as pd
 import requests
-import yfinance as yf
 from dotenv import load_dotenv
 
 from audit.aletheia_wrapper import audit_signal
+from backtesting.data import DataManager
 
 load_dotenv()
 
@@ -16,16 +16,25 @@ load_dotenv()
 class CryptoAgent:
     """Generate simple crypto signals and audit each decision."""
 
-    def __init__(self, gateway_url: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        gateway_url: str | None = None,
+        api_key: str | None = None,
+        data_manager: DataManager | None = None,
+    ) -> None:
         self.gateway_url = gateway_url or os.getenv("ALETHEIA_GATEWAY", "")
         self.api_key = api_key or os.getenv("GATEWAY_API_KEY", "")
         self.coinbase_api_key = os.getenv("COINBASE_API_KEY", "")
         self.base_url = "https://api.exchange.coinbase.com"
+        self.data_manager = data_manager or DataManager(
+            gateway_url=self.gateway_url,
+            api_key=self.api_key,
+        )
 
     def get_historical_prices(
         self, symbol: str = "BTC-USD", days: int = 5, granularity_seconds: int = 3600
     ) -> pd.DataFrame:
-        """Fetch hourly candles from Coinbase; fallback to yfinance if needed."""
+        """Fetch hourly candles from Coinbase; fallback to configured market data backends."""
         end = datetime.now(UTC)
         start = end - pd.Timedelta(days=days)
 
@@ -58,16 +67,13 @@ class CryptoAgent:
         except requests.RequestException:
             pass
 
-        data = yf.download(
-            symbol, period=f"{days}d", interval="1h", auto_adjust=True, progress=False
+        timeframe = "1h" if granularity_seconds >= 3600 else f"{max(granularity_seconds // 60, 1)}m"
+        data = self.data_manager.download(
+            symbol=symbol,
+            timeframe=timeframe,
+            start=start.date().isoformat(),
+            end=end.date().isoformat(),
         )
-        if data.empty:
-            return data
-
-        if "Close" in data.columns:
-            data = data.rename(columns={"Close": "close"})
-        elif "close" not in data.columns:
-            data["close"] = data.iloc[:, 0]
         return data
 
     def compute_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:

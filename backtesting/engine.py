@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from audit.aletheia_wrapper import AletheiaWrapper
-from backtesting.data import DataDownloader
+from backtesting.data import DataManager
 from backtesting.strategies import STRATEGY_REGISTRY, BaseStrategy
 from risk.manager import PortfolioRiskState, RiskManager
 
@@ -65,7 +65,11 @@ class BacktestEngine:
         gateway_url: str | None = None,
         api_key: str | None = None,
     ) -> None:
-        self.downloader = DataDownloader(cache_dir=cache_dir)
+        self.downloader = DataManager(
+            cache_dir=cache_dir,
+            gateway_url=gateway_url,
+            api_key=api_key,
+        )
         self.auditor = AletheiaWrapper(gateway_url=gateway_url, api_key=api_key)
         self.risk = RiskManager()
 
