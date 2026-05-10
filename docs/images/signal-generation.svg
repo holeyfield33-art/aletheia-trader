@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" fill="#f6f7f5"/>
+  <rect x="40" y="40" width="1120" height="620" rx="20" fill="#e9efef" stroke="#005a5a" stroke-width="4"/>
+  <text x="600" y="320" text-anchor="middle" font-family="Arial" font-size="48" fill="#1a1d1f">Signal Generation Placeholder</text>
+  <text x="600" y="380" text-anchor="middle" font-family="Arial" font-size="26" fill="#1a1d1f">Replace with generation workflow screenshot</text>
+</svg>

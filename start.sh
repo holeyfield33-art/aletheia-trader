@@ -7,4 +7,5 @@ fi
 
 source venv/bin/activate
 pip install -r requirements.txt
-streamlit run dashboard/app.py
+pip install -r requirements-dev.txt
+streamlit run dashboard/app_enhanced.py
