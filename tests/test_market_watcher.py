@@ -9,6 +9,7 @@ from agents.market_watcher import MarketWatcher, MarketWatcherConfig
 from agents.signal_engine import NO_SIGNAL
 from backtesting.data import DataManager
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
+from market_watcher.data_feeds import MarketDataFeeds
 
 
 def _sample_market_frame(rows: int = 48) -> pd.DataFrame:
@@ -264,3 +265,54 @@ def test_market_watcher_async_cycle_runs(tmp_path):
     snapshot = asyncio.run(watcher.run_cycle_async())
     assert snapshot["symbols"]
     assert watcher.status()["cycle_count"] == 1
+
+
+def test_hook_unregister_stops_delivery(tmp_path):
+    watcher = MarketWatcher(
+        config=MarketWatcherConfig(symbols=["SPY"], poll_interval_seconds=0.02),
+        data_manager=DataManager(cache_dir=tmp_path / "cache"),
+    )
+    received: list[dict[str, object]] = []
+    hook_id = watcher.hooks.register("symbol_update", lambda payload: received.append(payload))
+    assert watcher.hooks.unregister("symbol_update", hook_id) is True
+
+    sample = _sample_market_frame()
+
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
+        del symbol, timeframe, start, end, use_cache, backend_order
+        frame = sample.copy()
+        frame.attrs["source_backend"] = "test"
+        return frame
+
+    watcher.data_manager.download = fake_download  # type: ignore[method-assign]
+    watcher.signal_engine.generate_forex_signal = lambda df, correlation_penalty=0.0: (  # type: ignore[method-assign]
+        "HOLD",
+        {"confidence": 50.0, "recommended_size": 0.0, "regime": "ranging"},
+        "",
+    )
+    watcher.run_cycle()
+    assert received == []
+
+
+def test_sentiment_provider_failover_health():
+    feeds = MarketDataFeeds(sentiment_failure_threshold=2, sentiment_cooldown_seconds=60)
+    feeds.alpha_vantage_api_key = "set"
+
+    feeds._alpha_vantage_news_sentiment = lambda symbol: None  # type: ignore[method-assign]
+    first = feeds._external_sentiment("SPY")
+    second = feeds._external_sentiment("SPY")
+
+    assert first is None
+    assert second is None
+    health = feeds.sentiment_provider_health()
+    provider = health["alpha_vantage_news"]
+    assert provider["failures"] >= 2
+    assert provider["blocked"] is True

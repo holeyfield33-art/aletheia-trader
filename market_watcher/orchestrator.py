@@ -197,6 +197,9 @@ class MarketWatcher:
     def history(self) -> list[dict[str, Any]]:
         return self.state_store.history()
 
+    def sentiment_provider_health(self) -> dict[str, dict[str, object]]:
+        return self.feeds.sentiment_provider_health()
+
     def status(self) -> dict[str, Any]:
         latest = self.state_store.latest_snapshot()
         hb = self.heartbeat.snapshot()

@@ -72,9 +72,11 @@ Dashboard (Streamlit) <-> API (FastAPI) <-> Market Watcher + Agents <-> Aletheia
 | GET | `/v1/analytics/pnl` | Daily and total P&L |
 | GET | `/v1/market-watcher/status` | Live watcher health and latest snapshot |
 | GET | `/v1/market-watcher/history` | Historical watcher snapshots |
+| GET | `/v1/market-watcher/sentiment-health` | Sentiment provider failover/cooldown health |
 | POST | `/v1/market-watcher/start` | Start watcher loop |
 | POST | `/v1/market-watcher/stop` | Stop watcher loop |
 | POST | `/v1/market-watcher/run-once` | Run single watcher cycle |
+| WS | `/v1/market-watcher/stream?event=cycle_complete` | Live watcher event stream (`cycle_complete` or `symbol_update`) |
 
 ## Dashboard Screenshots
 
