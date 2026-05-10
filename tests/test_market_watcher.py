@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pandas as pd
@@ -175,3 +176,91 @@ def test_market_watcher_uses_external_sentiment_feed_when_available(tmp_path):
     assert snapshot["symbols"]
     assert snapshot["symbols"][0]["sentiment_source"] == "alpha_vantage_news"
     assert float(snapshot["symbols"][0]["sentiment_score"]) == 0.71
+
+
+def test_market_watcher_symbol_update_hook_is_emitted(tmp_path):
+    ledger = SignalAndOrderLedger(
+        signals_path=str(tmp_path / "pending.json"),
+        orders_path=str(tmp_path / "orders.json"),
+    )
+    watcher = MarketWatcher(
+        config=MarketWatcherConfig(symbols=["EUR/USD"], poll_interval_seconds=0.02),
+        ledger=ledger,
+        data_manager=DataManager(cache_dir=tmp_path / "cache"),
+    )
+
+    sample = _sample_market_frame()
+
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
+        del symbol, timeframe, start, end, use_cache, backend_order
+        frame = sample.copy()
+        frame.attrs["source_backend"] = "test"
+        return frame
+
+    received: list[dict[str, object]] = []
+    watcher.data_manager.download = fake_download  # type: ignore[method-assign]
+    watcher.signal_engine.generate_forex_signal = lambda df, correlation_penalty=0.0: (  # type: ignore[method-assign]
+        "HOLD",
+        {
+            "confidence": 55.0,
+            "recommended_size": 0.0,
+            "regime": "ranging",
+        },
+        "",
+    )
+    watcher.hooks.register("symbol_update", lambda payload: received.append(payload))
+
+    watcher.run_cycle()
+    assert received
+    assert str(received[0].get("symbol")) == "EUR/USD"
+
+
+def test_market_watcher_async_cycle_runs(tmp_path):
+    ledger = SignalAndOrderLedger(
+        signals_path=str(tmp_path / "pending.json"),
+        orders_path=str(tmp_path / "orders.json"),
+    )
+    watcher = MarketWatcher(
+        config=MarketWatcherConfig(symbols=["SPY"], poll_interval_seconds=0.02),
+        ledger=ledger,
+        data_manager=DataManager(cache_dir=tmp_path / "cache"),
+    )
+
+    sample = _sample_market_frame()
+
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
+        del symbol, timeframe, start, end, use_cache, backend_order
+        frame = sample.copy()
+        frame.attrs["source_backend"] = "test"
+        return frame
+
+    watcher.data_manager.download = fake_download  # type: ignore[method-assign]
+    watcher.signal_engine.generate_forex_signal = lambda df, correlation_penalty=0.0: (  # type: ignore[method-assign]
+        "HOLD",
+        {
+            "confidence": 65.0,
+            "recommended_size": 2.0,
+            "regime": "trending",
+        },
+        "",
+    )
+
+    snapshot = asyncio.run(watcher.run_cycle_async())
+    assert snapshot["symbols"]
+    assert watcher.status()["cycle_count"] == 1
