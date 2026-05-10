@@ -101,7 +101,10 @@ with st.sidebar:
     page = st.radio("**Navigate To:**", ["📊 Dashboard", "🚀 Signal Generator", "⏳ Pending Approvals", "📈 Trade History", "📉 Analytics", "⚙️ Settings"], label_visibility="collapsed")
     st.divider()
     api_ok, status = check_api()
-    st.success(f"✅ API {status}") if api_ok else st.error(f"❌ API {status}")
+    if api_ok:
+        st.success(f"✅ API {status}")
+    else:
+        st.error(f"❌ API {status}")
     st.divider()
     st.markdown("**Quick Links:**")
     col1, col2 = st.columns(2)
