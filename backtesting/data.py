@@ -4,7 +4,6 @@ import hashlib
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -16,6 +15,7 @@ from audit.aletheia_wrapper import AletheiaWrapper
 
 class DataManager:
     SUPPORTED_BACKENDS = ("yfinance", "polygon", "fmp", "alpha_vantage")
+    _REQUEST_PARAM_VALUE = str | bytes | int | float | None
 
     def __init__(
         self,
@@ -241,17 +241,18 @@ class DataManager:
     ) -> pd.DataFrame:
         multiplier, timespan = self._polygon_timespan(timeframe)
         polygon_symbol = self._polygon_symbol(symbol)
+        polygon_params: dict[str, DataManager._REQUEST_PARAM_VALUE] = {
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": 50000,
+            "apiKey": self.polygon_api_key,
+        }
         response = requests.get(
             (
                 "https://api.polygon.io/v2/aggs/ticker/"
                 f"{polygon_symbol}/range/{multiplier}/{timespan}/{start}/{end}"
             ),
-            params={
-                "adjusted": "true",
-                "sort": "asc",
-                "limit": 50000,
-                "apiKey": self.polygon_api_key,
-            },
+            params=polygon_params,
             timeout=10,
         )
         response.raise_for_status()
@@ -282,12 +283,12 @@ class DataManager:
         normalized = self.normalize_symbol(symbol).replace("=X", "")
         if interval == "1day":
             url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{normalized}"
-            params: dict[str, Any] = {
+            daily_params: dict[str, DataManager._REQUEST_PARAM_VALUE] = {
                 "from": start,
                 "to": end,
                 "apikey": self.fmp_api_key,
             }
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=daily_params, timeout=10)
             response.raise_for_status()
             payload = response.json()
             rows = payload.get("historical", [])
@@ -295,8 +296,12 @@ class DataManager:
             url = (
                 f"https://financialmodelingprep.com/api/v3/historical-chart/{interval}/{normalized}"
             )
-            params = {"from": start, "to": end, "apikey": self.fmp_api_key}
-            response = requests.get(url, params=params, timeout=10)
+            intraday_params: dict[str, DataManager._REQUEST_PARAM_VALUE] = {
+                "from": start,
+                "to": end,
+                "apikey": self.fmp_api_key,
+            }
+            response = requests.get(url, params=intraday_params, timeout=10)
             response.raise_for_status()
             rows = response.json()
 
@@ -314,7 +319,10 @@ class DataManager:
     ) -> pd.DataFrame:
         del start, end
         normalized = self.normalize_symbol(symbol)
-        params: dict[str, str] = {"apikey": self.alpha_vantage_api_key, "outputsize": "full"}
+        params: dict[str, DataManager._REQUEST_PARAM_VALUE] = {
+            "apikey": self.alpha_vantage_api_key,
+            "outputsize": "full",
+        }
 
         if timeframe.lower() in {"1d", "d", "day", "daily"}:
             if self._is_fx_symbol(normalized):

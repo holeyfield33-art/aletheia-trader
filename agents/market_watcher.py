@@ -311,14 +311,15 @@ class MarketWatcher:
         if ticker == "JPY":
             ticker = "USDJPY"
         try:
+            params: dict[str, str | int | float | None] = {
+                "function": "NEWS_SENTIMENT",
+                "tickers": ticker,
+                "limit": 50,
+                "apikey": self.alpha_vantage_api_key,
+            }
             response = requests.get(
                 "https://www.alphavantage.co/query",
-                params={
-                    "function": "NEWS_SENTIMENT",
-                    "tickers": ticker,
-                    "limit": 50,
-                    "apikey": self.alpha_vantage_api_key,
-                },
+                params=params,
                 timeout=8,
             )
             response.raise_for_status()
@@ -332,10 +333,11 @@ class MarketWatcher:
                 if not isinstance(item, dict):
                     continue
                 raw = item.get("overall_sentiment_score")
-                try:
-                    scores.append(float(raw))
-                except (TypeError, ValueError):
-                    continue
+                if isinstance(raw, int | float | str):
+                    try:
+                        scores.append(float(raw))
+                    except ValueError:
+                        continue
 
             if not scores:
                 return None
@@ -356,7 +358,13 @@ class MarketWatcher:
             data = payload.get("data", [])
             if not isinstance(data, list) or not data:
                 return None
-            value = float(data[0].get("value", 50.0))
+            first = data[0]
+            if not isinstance(first, dict):
+                return None
+            raw_value = first.get("value")
+            value = 50.0
+            if isinstance(raw_value, int | float | str):
+                value = float(raw_value)
             normalized = max(-1.0, min(1.0, (value - 50.0) / 50.0))
             return normalized, "alt_me_fear_greed"
         except Exception:

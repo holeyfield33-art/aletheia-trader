@@ -420,21 +420,28 @@ elif page == "👁️ Market Watcher":
             st.error(f"Run-once failed: {str(e)[:80]}")
 
     try:
-        status = requests.get(
+        status_payload = requests.get(
             f"{API_BASE}/v1/market-watcher/status", timeout=REQUEST_TIMEOUT_SECONDS
         ).json()
-        snapshot = status.get("latest_snapshot") or {}
-        symbols = snapshot.get("symbols") or []
+        watcher_status = status_payload if isinstance(status_payload, dict) else {}
+        snapshot = watcher_status.get("latest_snapshot") or {}
+        snapshot_data = snapshot if isinstance(snapshot, dict) else {}
+        watched_rows = (
+            snapshot_data.get("symbols") if isinstance(snapshot_data.get("symbols"), list) else []
+        )
 
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("State", "RUNNING" if status.get("running") else "STOPPED")
-        k2.metric("Cycles", str(status.get("cycle_count", 0)))
-        k3.metric("Heartbeat Lag (s)", f"{_as_float(status.get('seconds_since_heartbeat')):.1f}")
-        k4.metric("Last Error", str(status.get("last_error") or "none")[:18])
+        k1.metric("State", "RUNNING" if watcher_status.get("running") else "STOPPED")
+        k2.metric("Cycles", str(watcher_status.get("cycle_count", 0)))
+        k3.metric(
+            "Heartbeat Lag (s)",
+            f"{_as_float(watcher_status.get('seconds_since_heartbeat')):.1f}",
+        )
+        k4.metric("Last Error", str(watcher_status.get("last_error") or "none")[:18])
 
         st.markdown("### Symbol Diagnostics")
-        if symbols:
-            symbol_df = pd.DataFrame(symbols)
+        if watched_rows:
+            symbol_df = pd.DataFrame(watched_rows)
             display_cols = [
                 "symbol",
                 "signal",
@@ -446,21 +453,29 @@ elif page == "👁️ Market Watcher":
                 "correlation_penalty",
                 "source_backend",
             ]
-            cols = [c for c in display_cols if c in symbol_df.columns]
-            st.dataframe(symbol_df[cols], use_container_width=True, hide_index=True)
+            visible_cols = [c for c in display_cols if c in symbol_df.columns]
+            st.dataframe(symbol_df[visible_cols], use_container_width=True, hide_index=True)
         else:
             st.info("No MarketWatcher snapshots yet. Start the watcher or run one cycle.")
 
         st.markdown("### Correlation Map")
-        render_correlation_heatmap(snapshot.get("correlation_matrix") or {})
+        corr = snapshot_data.get("correlation_matrix")
+        render_correlation_heatmap(corr if isinstance(corr, dict) else {})
 
-        history_payload = requests.get(
+        history_payload_raw = requests.get(
             f"{API_BASE}/v1/market-watcher/history?limit=60", timeout=REQUEST_TIMEOUT_SECONDS
         ).json()
-        history = history_payload.get("history") or []
+        history_payload = history_payload_raw if isinstance(history_payload_raw, dict) else {}
+        history = (
+            history_payload.get("history")
+            if isinstance(history_payload.get("history"), list)
+            else []
+        )
         if history:
             points: list[dict[str, Any]] = []
             for row in history:
+                if not isinstance(row, dict):
+                    continue
                 ts = row.get("timestamp")
                 sym_rows = row.get("symbols") or []
                 avg_anomaly = 0.0
@@ -646,12 +661,12 @@ elif page == "⏳ Pending Approvals":
         if signals:
             for i, sig in enumerate(signals):
                 with st.container(border=True):
-                    cols = st.columns([2, 1, 1])
-                    cols[0].markdown(
+                    approval_cols = st.columns([2, 1, 1])
+                    approval_cols[0].markdown(
                         f"**#{i+1}: {sig.get('agent_type', 'N/A').upper()} • {sig.get('instrument', 'N/A')}**"
                     )
-                    cols[1].metric("Signal", sig.get("signal", "HOLD"))
-                    cols[2].metric("Expires", f"{sig.get('expires_in_minutes', 0)}m")
+                    approval_cols[1].metric("Signal", sig.get("signal", "HOLD"))
+                    approval_cols[2].metric("Expires", f"{sig.get('expires_in_minutes', 0)}m")
         else:
             st.success("✅ All signals reviewed!")
     except Exception as e:
