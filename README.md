@@ -120,6 +120,12 @@ CI watch and rerun helper:
 scripts/watch_ci.sh --workflow CI --branch main
 ```
 
+Local CI-equivalent gate:
+
+```bash
+scripts/ensure_ci.sh
+```
+
 ## Configuration
 
 Environment variables:

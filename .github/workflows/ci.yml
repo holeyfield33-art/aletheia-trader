@@ -28,16 +28,16 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
-        run: ruff check .
+        run: python -m ruff check .
 
       - name: Format check (black)
-        run: black --check .
+        run: python -m black --check .
 
       - name: Import order check (isort)
-        run: isort --check-only .
+        run: python -m isort --check-only .
 
       - name: Type check (mypy)
-        run: mypy agents api audit brokers dashboard scripts
+        run: python -m mypy agents api audit backtesting brokers dashboard risk scripts
 
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
