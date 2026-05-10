@@ -114,6 +114,12 @@ mypy agents api audit brokers dashboard scripts
 pytest -q
 ```
 
+CI watch and rerun helper:
+
+```bash
+scripts/watch_ci.sh --workflow CI --branch main
+```
+
 ## Configuration
 
 Environment variables:
