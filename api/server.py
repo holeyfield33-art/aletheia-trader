@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
 import uuid
-import math
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
@@ -66,6 +66,13 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> str:
     """Allow open access by default, enforce X-API-Key only when API_AUTH_KEY is configured."""
     configured_key = os.getenv("API_AUTH_KEY", "")
@@ -124,11 +131,11 @@ async def generate_signal(req: GenerateSignalRequest):
     if req.agent_type == "forex":
         result = forex_agent.run(instrument)
         agent_type = "forex"
-        resolved_instrument = result.get("pair", instrument)
+        resolved_instrument = str(result.get("pair") or instrument)
     elif req.agent_type == "options":
         result = options_agent.run(instrument)
         agent_type = "options"
-        resolved_instrument = result.get("symbol", instrument)
+        resolved_instrument = str(result.get("symbol") or instrument)
     else:
         raise HTTPException(status_code=400, detail="agent_type must be 'forex' or 'options'")
 
@@ -138,11 +145,14 @@ async def generate_signal(req: GenerateSignalRequest):
         )
 
     signal_value: str = str(result.get("signal") or NO_SIGNAL)
-    filter_reason: str = result.get("filter_reason", "") or ""
+    filter_reason: str = str(result.get("filter_reason") or "")
     is_filtered = signal_value == NO_SIGNAL
 
-    indicators = _sanitize_indicators(result.get("meta", {}))
-    chain_data = result.get("chain_data") if agent_type == "options" else None
+    raw_meta = result.get("meta")
+    indicators = _sanitize_indicators(raw_meta if isinstance(raw_meta, dict) else {})
+    raw_chain_data = result.get("chain_data") if agent_type == "options" else None
+    chain_data = raw_chain_data if isinstance(raw_chain_data, dict) else None
+    receipt = str(result.get("receipt") or "")
 
     # Only persist valid, actionable signals — filtered signals are discarded
     if not is_filtered:
@@ -153,7 +163,7 @@ async def generate_signal(req: GenerateSignalRequest):
             signal=signal_value,
             indicators=indicators,
             chain_data=chain_data,
-            receipt=result.get("receipt", ""),
+            receipt=receipt,
             ttl_minutes=120,
         )
 
@@ -163,7 +173,7 @@ async def generate_signal(req: GenerateSignalRequest):
         instrument=resolved_instrument,
         signal=signal_value,
         indicators=indicators,
-        receipt=result.get("receipt", ""),
+        receipt=receipt,
         expires_in_minutes=0 if is_filtered else 120,
         filtered=is_filtered,
         filter_reason=filter_reason,
@@ -248,7 +258,9 @@ async def close_order(req: CloseOrderRequest):
         raise HTTPException(status_code=404, detail="Order not found or not open")
 
     sign = 1 if order.get("side") in {"BUY", "CALL_BUY"} else -1
-    pnl = sign * (float(req.exit_price) - float(order.get("entry_price"))) * float(order.get("qty"))
+    entry_price = _as_float(order.get("entry_price"))
+    qty = _as_float(order.get("qty"))
+    pnl = sign * (float(req.exit_price) - entry_price) * qty
 
     return {
         "order_id": req.order_id,

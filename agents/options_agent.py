@@ -106,13 +106,37 @@ class OptionsAgent:
     def _fallback_signal(self, symbol: str) -> dict[str, object]:
         # Synthetic close series (25 rows so BB window of 20 can compute).
         # Includes a deep dip to trigger oversold RSI and a MACD crossover.
-        synthetic = pd.DataFrame({"close": [
-            410.0, 410.5, 411.2, 410.7, 410.1,
-            409.6, 408.9, 408.2, 407.5, 406.8,
-            406.1, 405.5, 405.0, 405.4, 406.0,
-            406.7, 407.4, 408.1, 408.8, 409.5,
-            410.0, 410.3, 410.6, 410.2, 409.8,
-        ]})
+        synthetic = pd.DataFrame(
+            {
+                "close": [
+                    410.0,
+                    410.5,
+                    411.2,
+                    410.7,
+                    410.1,
+                    409.6,
+                    408.9,
+                    408.2,
+                    407.5,
+                    406.8,
+                    406.1,
+                    405.5,
+                    405.0,
+                    405.4,
+                    406.0,
+                    406.7,
+                    407.4,
+                    408.1,
+                    408.8,
+                    409.5,
+                    410.0,
+                    410.3,
+                    410.6,
+                    410.2,
+                    409.8,
+                ]
+            }
+        )
         synthetic["high"] = synthetic["close"] * 1.001
         synthetic["low"] = synthetic["close"] * 0.999
         signal, indicators, filter_reason = self.engine.generate_options_signal(synthetic)

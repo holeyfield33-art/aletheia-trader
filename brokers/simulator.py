@@ -111,6 +111,22 @@ class PaperSimulator:
                     return order
         return None
 
+    @staticmethod
+    def _as_float(value: object, default: float = 0.0) -> float:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return default
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return default
+
     def get_daily_pnl(self) -> dict[str, object]:
         with self._lock:
             orders = self._read()
@@ -131,9 +147,9 @@ class PaperSimulator:
             if status == "CLOSED" and order.get("exit_price") is not None:
                 side = str(order.get("side", ""))
                 sign = 1 if side.upper() in {"BUY", "CALL_BUY"} else -1
-                exit_price: float = float(order.get("exit_price", 0.0) or 0.0)
-                entry_price: float = float(order.get("entry_price", 0.0) or 0.0)
-                qty: float = float(order.get("qty", 0.0) or 0.0)
+                exit_price = self._as_float(order.get("exit_price", 0.0))
+                entry_price = self._as_float(order.get("entry_price", 0.0))
+                qty = self._as_float(order.get("qty", 0.0))
                 pnl += sign * (exit_price - entry_price) * qty
                 closed += 1
             elif status in {"OPEN", "PENDING_APPROVAL"}:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
 
 NO_SIGNAL = "NO_SIGNAL"
@@ -95,7 +94,9 @@ class SignalEngine:
             return "unknown"
         fast = close.ewm(span=8, adjust=False).mean()
         slow = close.ewm(span=20, adjust=False).mean()
-        trend_strength = abs(float((fast.iloc[-1] - slow.iloc[-1]) / slow.iloc[-1])) if slow.iloc[-1] else 0.0
+        trend_strength = (
+            abs(float((fast.iloc[-1] - slow.iloc[-1]) / slow.iloc[-1])) if slow.iloc[-1] else 0.0
+        )
         return "trending" if trend_strength > 0.008 else "ranging"
 
     @staticmethod
@@ -123,9 +124,8 @@ class SignalEngine:
 
         rsi_extreme = snap.rsi < 35 or snap.rsi > 65
         macd_cross = (prev_hist <= 0 < snap.macd_hist) or (prev_hist >= 0 > snap.macd_hist)
-        bb_touch = (
-            (last_price <= snap.bb_lower and snap.rsi < 45)
-            or (last_price >= snap.bb_upper and snap.rsi > 55)
+        bb_touch = (last_price <= snap.bb_lower and snap.rsi < 45) or (
+            last_price >= snap.bb_upper and snap.rsi > 55
         )
         bb_width = (snap.bb_upper - snap.bb_lower) / snap.bb_mid if snap.bb_mid else 0.0
 
@@ -234,9 +234,8 @@ class SignalEngine:
         rsi_strong = snap.rsi < 35 or snap.rsi > 65
 
         # Rule 2b — Fresh MACD histogram crossover (sign change)
-        macd_crossover = (
-            (prev_hist > 0 and snap.macd_hist < 0)
-            or (prev_hist < 0 and snap.macd_hist > 0)
+        macd_crossover = (prev_hist > 0 and snap.macd_hist < 0) or (
+            prev_hist < 0 and snap.macd_hist > 0
         )
 
         # Rule 2c — Price touching Bollinger Band with RSI confirmation

@@ -80,7 +80,11 @@ class RiskManager:
     ) -> dict[str, float]:
         """Historical VaR/CVaR in return space (negative values imply loss)."""
         if returns.empty:
-            return {"var": 0.0, "cvar": 0.0, "confidence": float(confidence or self.config.var_confidence)}
+            return {
+                "var": 0.0,
+                "cvar": 0.0,
+                "confidence": float(confidence or self.config.var_confidence),
+            }
 
         conf = float(confidence or self.config.var_confidence)
         conf = float(np.clip(conf, 0.5, 0.999))
@@ -166,9 +170,11 @@ class RiskManager:
             "var": float(tail["var"]),
             "cvar": float(tail["cvar"]),
             "correlation_matrix": corr.round(6).to_dict(),
-            "open_notional_pct": float(state.open_notional / state.current_capital)
-            if state.current_capital > 0
-            else 0.0,
+            "open_notional_pct": (
+                float(state.open_notional / state.current_capital)
+                if state.current_capital > 0
+                else 0.0
+            ),
         }
 
 

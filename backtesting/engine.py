@@ -134,7 +134,11 @@ class BacktestEngine:
             timeframe=config.timeframe,
         )
 
-        day_start_capital = float(portfolio_equity.iloc[-2]) if len(portfolio_equity) > 1 else float(config.initial_cash)
+        day_start_capital = (
+            float(portfolio_equity.iloc[-2])
+            if len(portfolio_equity) > 1
+            else float(config.initial_cash)
+        )
         risk_state = PortfolioRiskState(
             equity_curve=portfolio_equity,
             starting_capital=float(config.initial_cash),
@@ -230,11 +234,20 @@ class BacktestEngine:
         keys = list(param_grid.keys())
         rows: list[dict[str, Any]] = []
         for combo in itertools.product(*param_grid.values()):
-            params = {**config.strategy_params, **dict(zip(keys, combo))}
-            res = self._run_from_data(symbol=symbol, data=data, config=config, strategy_params=params)
+            params = {**config.strategy_params, **dict(zip(keys, combo, strict=False))}
+            res = self._run_from_data(
+                symbol=symbol, data=data, config=config, strategy_params=params
+            )
             row: dict[str, Any] = {"objective": float(res.metrics.get(objective, 0.0))}
             row.update(params)
-            for metric_key in ["sharpe", "sortino", "calmar", "max_drawdown", "win_rate", "profit_factor"]:
+            for metric_key in [
+                "sharpe",
+                "sortino",
+                "calmar",
+                "max_drawdown",
+                "win_rate",
+                "profit_factor",
+            ]:
                 row[metric_key] = float(res.metrics.get(metric_key, 0.0))
             rows.append(row)
 
@@ -272,11 +285,7 @@ class BacktestEngine:
             if opt.empty:
                 break
             best = opt.iloc[0].to_dict()
-            best_params = {
-                k: best[k]
-                for k in param_grid.keys()
-                if k in best
-            }
+            best_params = {k: best[k] for k in param_grid if k in best}
             test_res = self._run_from_data(
                 symbol=symbol,
                 data=test_df,
@@ -379,7 +388,9 @@ class BacktestEngine:
         }
         return json.dumps(payload, indent=2, default=str)
 
-    def _run_single(self, symbol: str, data: pd.DataFrame, config: BacktestConfig) -> BacktestResult:
+    def _run_single(
+        self, symbol: str, data: pd.DataFrame, config: BacktestConfig
+    ) -> BacktestResult:
         return self._run_from_data(
             symbol=symbol,
             data=data,
@@ -396,7 +407,9 @@ class BacktestEngine:
     ) -> BacktestResult:
         strategy_cls = STRATEGY_REGISTRY.get(config.strategy)
         if strategy_cls is None:
-            raise ValueError(f"Unknown strategy '{config.strategy}'. Available: {sorted(STRATEGY_REGISTRY)}")
+            raise ValueError(
+                f"Unknown strategy '{config.strategy}'. Available: {sorted(STRATEGY_REGISTRY)}"
+            )
 
         strategy: BaseStrategy = strategy_cls()
         merged_params = {**strategy_params}
@@ -435,7 +448,11 @@ class BacktestEngine:
             returns=strategy_returns,
             initial_cash=float(config.initial_cash),
         )
-        trade_returns = trades["trade_return"].astype(float).to_numpy() if not trades.empty else np.array([], dtype=float)
+        trade_returns = (
+            trades["trade_return"].astype(float).to_numpy()
+            if not trades.empty
+            else np.array([], dtype=float)
+        )
 
         metrics = self._compute_metrics(
             equity=equity,
@@ -483,8 +500,10 @@ class BacktestEngine:
         rows: list[dict[str, Any]] = []
 
         for combo in itertools.product(*param_grid.values()):
-            params = {**config.strategy_params, **dict(zip(keys, combo))}
-            res = self._run_from_data(symbol=symbol, data=data, config=config, strategy_params=params)
+            params = {**config.strategy_params, **dict(zip(keys, combo, strict=False))}
+            res = self._run_from_data(
+                symbol=symbol, data=data, config=config, strategy_params=params
+            )
             row: dict[str, Any] = {"objective": float(res.metrics.get("sharpe", 0.0))}
             row.update(params)
             row["total_return"] = float(res.metrics.get("total_return", 0.0))
@@ -647,7 +666,9 @@ class BacktestEngine:
             else 0.0
         )
         calmar = annual_return / abs(max_dd) if max_dd < 0 else 0.0
-        max_dd_duration = float(BacktestEngine._max_drawdown_duration((equity / equity.cummax() - 1.0)))
+        max_dd_duration = float(
+            BacktestEngine._max_drawdown_duration(equity / equity.cummax() - 1.0)
+        )
 
         if trade_returns.size > 0:
             wins = trade_returns[trade_returns > 0]
@@ -682,7 +703,20 @@ class BacktestEngine:
         monthly_df = monthly.to_frame("ret")
         monthly_df["year"] = monthly_df.index.year
         monthly_df["month"] = monthly_df.index.strftime("%b")
-        month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        month_order = [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+        ]
         heatmap = monthly_df.pivot(index="year", columns="month", values="ret")
         return heatmap.reindex(columns=month_order)
 

@@ -53,5 +53,14 @@ no_implicit_optional = true
 exclude = ["^data/"]
 
 [[tool.mypy.overrides]]
-module = ["yfinance", "streamlit", "streamlit_autorefresh", "requests"]
+module = [
+  "yfinance",
+  "streamlit",
+  "streamlit_autorefresh",
+  "requests",
+  "pandas",
+  "plotly",
+  "plotly.graph_objects",
+  "vectorbt",
+]
 ignore_missing_imports = true

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-import numpy as np
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -40,7 +40,9 @@ class DataDownloader:
     ) -> pd.DataFrame:
         candidates = self._symbol_candidates(symbol)
         normalized = self.normalize_symbol(symbol)
-        cache_key = hashlib.sha1(f"{normalized}|{timeframe}|{start}|{end}".encode()).hexdigest()[:16]
+        cache_key = hashlib.sha1(f"{normalized}|{timeframe}|{start}|{end}".encode()).hexdigest()[
+            :16
+        ]
         cache_file = self.cache_dir / f"{normalized.replace('/', '_')}_{timeframe}_{cache_key}.pkl"
 
         if use_cache and cache_file.exists():
@@ -119,9 +121,7 @@ class DataDownloader:
     @staticmethod
     def _synthetic_ohlcv(start: str, end: str, timeframe: str) -> pd.DataFrame:
         tf = timeframe.lower()
-        if tf.endswith("m"):
-            freq = tf
-        elif tf.endswith("h"):
+        if tf.endswith("m") or tf.endswith("h"):
             freq = tf
         elif tf.endswith("d"):
             freq = "1d"

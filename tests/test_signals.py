@@ -40,11 +40,31 @@ def _sample_df() -> pd.DataFrame:
 def _strong_oversold_df() -> pd.DataFrame:
     """25-bar series with a sharp dip — should survive RSI+MACD validation."""
     closes = [
-        100.0, 100.3, 100.6, 100.2, 99.8,
-        99.3,  98.7,  98.0,  97.2,  96.3,
-        95.3,  94.2,  93.0,  93.5,  94.1,
-        94.8,  95.6,  96.4,  97.3,  98.2,
-        99.1, 100.0, 100.8, 101.5, 102.0,
+        100.0,
+        100.3,
+        100.6,
+        100.2,
+        99.8,
+        99.3,
+        98.7,
+        98.0,
+        97.2,
+        96.3,
+        95.3,
+        94.2,
+        93.0,
+        93.5,
+        94.1,
+        94.8,
+        95.6,
+        96.4,
+        97.3,
+        98.2,
+        99.1,
+        100.0,
+        100.8,
+        101.5,
+        102.0,
     ]
     df = pd.DataFrame({"close": closes})
     df["high"] = df["close"] * 1.001
@@ -114,7 +134,10 @@ def test_no_signal_has_non_empty_reason():
 
 def test_correlation_penalty_reduces_recommended_size():
     engine = SignalEngine()
-    _, meta_no_penalty, _ = engine.generate_forex_signal(_strong_oversold_df(), correlation_penalty=0.0)
-    _, meta_penalty, _ = engine.generate_forex_signal(_strong_oversold_df(), correlation_penalty=0.8)
+    _, meta_no_penalty, _ = engine.generate_forex_signal(
+        _strong_oversold_df(), correlation_penalty=0.0
+    )
+    _, meta_penalty, _ = engine.generate_forex_signal(
+        _strong_oversold_df(), correlation_penalty=0.8
+    )
     assert float(meta_penalty["recommended_size"]) <= float(meta_no_penalty["recommended_size"])
-

@@ -47,8 +47,12 @@ def main() -> None:
         "summary": json.loads(engine.to_summary_json(report)),
         "optimization_top5": optimization.head(5).to_dict(orient="records"),
         "walk_forward": walk_forward,
-        "portfolio_equity_tail": report.portfolio_equity.tail(5).reset_index().to_dict(orient="records"),
-        "portfolio_drawdown_tail": report.portfolio_drawdown.tail(5).reset_index().to_dict(orient="records"),
+        "portfolio_equity_tail": report.portfolio_equity.tail(5)
+        .reset_index()
+        .to_dict(orient="records"),
+        "portfolio_drawdown_tail": report.portfolio_drawdown.tail(5)
+        .reset_index()
+        .to_dict(orient="records"),
     }
     print(json.dumps(payload, indent=2, default=str))
 
