@@ -1,6 +1,5 @@
 [server]
 headless = true
-enableCORS = false
 enableXsrfProtection = true
 port = 8501
 address = "0.0.0.0"
@@ -9,9 +8,9 @@ address = "0.0.0.0"
 gatherUsageStats = false
 
 [theme]
-base = "light"
-primaryColor = "#005A5A"
-backgroundColor = "#F6F7F5"
-secondaryBackgroundColor = "#E9EFEF"
-textColor = "#1A1D1F"
+base = "dark"
+primaryColor = "#8B5CF6"
+backgroundColor = "#020617"
+secondaryBackgroundColor = "#1E293B"
+textColor = "#F1F5F9"
 font = "sans serif"
