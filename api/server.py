@@ -89,6 +89,9 @@ class GenerateSignalResponse(BaseModel):
     expires_in_minutes: int
     filtered: bool
     filter_reason: str
+    confidence_score: float
+    regime: str
+    recommended_size: float
 
 
 class ApproveSignalRequest(BaseModel):
@@ -164,6 +167,9 @@ async def generate_signal(req: GenerateSignalRequest):
         expires_in_minutes=0 if is_filtered else 120,
         filtered=is_filtered,
         filter_reason=filter_reason,
+        confidence_score=float(indicators.get("confidence", 0.0)),
+        regime=str(indicators.get("regime", "unknown")),
+        recommended_size=float(indicators.get("recommended_size", 0.0)),
     )
 
 

@@ -44,7 +44,15 @@ class OptionsAgent:
             return data
 
         if "Close" in data.columns:
-            data = data.rename(columns={"Close": "close"})
+            data = data.rename(
+                columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
         elif "close" not in data.columns:
             data["close"] = data.iloc[:, 0]
         return data
@@ -105,6 +113,8 @@ class OptionsAgent:
             406.7, 407.4, 408.1, 408.8, 409.5,
             410.0, 410.3, 410.6, 410.2, 409.8,
         ]})
+        synthetic["high"] = synthetic["close"] * 1.001
+        synthetic["low"] = synthetic["close"] * 0.999
         signal, indicators, filter_reason = self.engine.generate_options_signal(synthetic)
         payload = {
             "instrument_type": "options",

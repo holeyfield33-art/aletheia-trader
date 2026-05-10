@@ -32,7 +32,15 @@ class ForexAgent:
             return data
 
         if "Close" in data.columns:
-            data = data.rename(columns={"Close": "close"})
+            data = data.rename(
+                columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
         elif "close" not in data.columns:
             data["close"] = data.iloc[:, 0]
         return data
@@ -47,6 +55,8 @@ class ForexAgent:
             97.4,  97.9,  98.5,  99.0,  99.5,
             100.0, 100.3, 100.6, 100.2, 99.8,
         ]})
+        synthetic["high"] = synthetic["close"] * 1.001
+        synthetic["low"] = synthetic["close"] * 0.999
         signal, indicators, filter_reason = self.engine.generate_forex_signal(synthetic)
         payload = {
             "instrument_type": "forex",
@@ -86,6 +96,7 @@ class ForexAgent:
             "pair": pair,
             "signal": signal,
             "meta": indicators,
+            "filter_reason": filter_reason,
             "receipt": receipt.get("receipt", "mock-receipt"),
             "approved": False,
         }

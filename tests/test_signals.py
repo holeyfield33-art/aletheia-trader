@@ -31,7 +31,10 @@ def _sample_df() -> pd.DataFrame:
         103,
         104,
     ]
-    return pd.DataFrame({"close": closes})
+    df = pd.DataFrame({"close": closes})
+    df["high"] = df["close"] * 1.001
+    df["low"] = df["close"] * 0.999
+    return df
 
 
 def _strong_oversold_df() -> pd.DataFrame:
@@ -43,12 +46,18 @@ def _strong_oversold_df() -> pd.DataFrame:
         94.8,  95.6,  96.4,  97.3,  98.2,
         99.1, 100.0, 100.8, 101.5, 102.0,
     ]
-    return pd.DataFrame({"close": closes})
+    df = pd.DataFrame({"close": closes})
+    df["high"] = df["close"] * 1.001
+    df["low"] = df["close"] * 0.999
+    return df
 
 
 def _short_df() -> pd.DataFrame:
     """Only 10 bars — BB window of 20 can't fire, should be filtered."""
-    return pd.DataFrame({"close": [100, 101, 102, 101, 100, 99, 98, 99, 100, 102]})
+    df = pd.DataFrame({"close": [100, 101, 102, 101, 100, 99, 98, 99, 100, 102]})
+    df["high"] = df["close"] * 1.001
+    df["low"] = df["close"] * 0.999
+    return df
 
 
 def test_generate_forex_signal_returns_valid_action():
@@ -57,6 +66,9 @@ def test_generate_forex_signal_returns_valid_action():
     assert action in {"BUY", "SELL", "HOLD", NO_SIGNAL}
     assert "rsi" in meta
     assert "macd_hist" in meta
+    assert "confidence" in meta
+    assert "regime" in meta
+    assert "recommended_size" in meta
     assert isinstance(filter_reason, str)
 
 
@@ -66,6 +78,7 @@ def test_generate_options_signal_returns_valid_action():
     assert action in {"CALL_BUY", "PUT_BUY", "HOLD", NO_SIGNAL}
     assert "rsi" in meta
     assert "bb_mid" in meta
+    assert 0.0 <= float(meta.get("confidence", 0.0)) <= 100.0
     assert isinstance(filter_reason, str)
 
 
@@ -97,4 +110,11 @@ def test_no_signal_has_non_empty_reason():
     action, meta, filter_reason = engine.generate_forex_signal(_short_df())
     if action == NO_SIGNAL:
         assert len(filter_reason) > 0
+
+
+def test_correlation_penalty_reduces_recommended_size():
+    engine = SignalEngine()
+    _, meta_no_penalty, _ = engine.generate_forex_signal(_strong_oversold_df(), correlation_penalty=0.0)
+    _, meta_penalty, _ = engine.generate_forex_signal(_strong_oversold_df(), correlation_penalty=0.8)
+    assert float(meta_penalty["recommended_size"]) <= float(meta_no_penalty["recommended_size"])
 
