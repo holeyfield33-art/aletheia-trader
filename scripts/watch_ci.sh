@@ -71,18 +71,22 @@ if [[ -n "$repo" ]]; then
   repo_args+=(--repo "$repo")
 fi
 
+if [[ -z "$repo" ]]; then
+  repo="$(GH_PAGER=cat gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+fi
+
 get_latest_run_id() {
   gh run list "${repo_args[@]}" --workflow "$workflow" --branch "$branch" --limit 1 --json databaseId --jq '.[0].databaseId // empty'
 }
 
 get_run_conclusion() {
   local run_id="$1"
-  gh run view "${repo_args[@]}" "$run_id" --json conclusion --jq '.conclusion // ""'
+  GH_PAGER=cat GH_FORCE_TTY=0 gh api "repos/$repo/actions/runs/$run_id" --jq '.conclusion // ""'
 }
 
 get_run_status() {
   local run_id="$1"
-  gh run view "${repo_args[@]}" "$run_id" --json status --jq '.status // ""'
+  GH_PAGER=cat GH_FORCE_TTY=0 gh api "repos/$repo/actions/runs/$run_id" --jq '.status // ""'
 }
 
 run_id="$(get_latest_run_id)"
@@ -92,8 +96,6 @@ if [[ -z "$run_id" ]]; then
 fi
 
 echo "Watching run $run_id for workflow '$workflow' on branch '$branch'..."
-
-gh run watch "${repo_args[@]}" "$run_id"
 
 attempt=0
 while true; do
@@ -108,7 +110,7 @@ while true; do
   fi
 
   if [[ "$status" != "completed" ]]; then
-    gh run watch "${repo_args[@]}" "$run_id"
+    sleep 5
     continue
   fi
 
@@ -137,5 +139,4 @@ while true; do
       exit 1
     fi
   fi
-  gh run watch "${repo_args[@]}" "$run_id"
 done
