@@ -128,5 +128,45 @@
     "created_at": "2026-04-29T13:59:11.163227+00:00",
     "expires_at": "1777478351",
     "status": "PENDING"
+  },
+  {
+    "signal_id": "sig-e122eed7",
+    "agent_type": "forex",
+    "instrument": "EUR/USD",
+    "signal": "HOLD",
+    "indicators": {
+      "rsi": 50.0,
+      "macd": 0.05924933170439317,
+      "macd_signal": 0.06353307580844873,
+      "macd_hist": -0.004283744104055562,
+      "bb_upper": NaN,
+      "bb_mid": NaN,
+      "bb_lower": NaN
+    },
+    "chain_data": null,
+    "receipt": "mock-1778403494",
+    "created_at": "2026-05-10T08:58:14.259235+00:00",
+    "expires_at": "1778410694",
+    "status": "PENDING"
+  },
+  {
+    "signal_id": "sig-4ab425fa",
+    "agent_type": "forex",
+    "instrument": "EUR/USD",
+    "signal": "HOLD",
+    "indicators": {
+      "rsi": 50.0,
+      "macd": 0.05924933170439317,
+      "macd_signal": 0.06353307580844873,
+      "macd_hist": -0.004283744104055562,
+      "bb_upper": 0.0,
+      "bb_mid": 0.0,
+      "bb_lower": 0.0
+    },
+    "chain_data": null,
+    "receipt": "mock-1778403541",
+    "created_at": "2026-05-10T08:59:01.090723+00:00",
+    "expires_at": "1778410741",
+    "status": "PENDING"
   }
 ]

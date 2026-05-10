@@ -37,5 +37,18 @@
     "executed_at": "2026-04-29T13:59:11.354717+00:00",
     "exit_price": 102.5,
     "closed_at": "2026-04-29T13:59:11.359077+00:00"
+  },
+  {
+    "order_id": "ord-4",
+    "signal_id": "sig-e9112cd7",
+    "instrument": "EUR/USD",
+    "side": "HOLD",
+    "qty": 1.0,
+    "entry_price": 100.0,
+    "status": "CLOSED",
+    "approved_at": "2026-05-10T09:01:03.151323+00:00",
+    "executed_at": "2026-05-10T09:01:03.151323+00:00",
+    "exit_price": 101.5,
+    "closed_at": "2026-05-10T09:01:03.157800+00:00"
   }
 ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+import math
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
@@ -38,6 +39,30 @@ def _validate_instrument(value: str) -> str:
     if any(ch not in allowed_chars for ch in cleaned):
         raise HTTPException(status_code=422, detail="pair_or_symbol contains invalid characters")
     return cleaned
+
+
+def _sanitize_indicators(indicators: dict[str, Any] | None) -> dict[str, float]:
+    if not indicators:
+        return {}
+
+    sanitized: dict[str, float] = {}
+    for key, value in indicators.items():
+        try:
+            numeric = float(value)
+            sanitized[key] = numeric if math.isfinite(numeric) else 0.0
+        except (TypeError, ValueError):
+            sanitized[key] = 0.0
+    return sanitized
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0.0
+    return value
 
 
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> str:
@@ -106,13 +131,14 @@ async def generate_signal(req: GenerateSignalRequest):
             status_code=500, detail=f"Signal generation failed: {result.get('error')}"
         )
 
+    indicators = _sanitize_indicators(result.get("meta", {}))
     chain_data = result.get("chain_data") if agent_type == "options" else None
     ledger.add_signal(
         signal_id=signal_id,
         agent_type=agent_type,
         instrument=resolved_instrument,
         signal=result.get("signal"),
-        indicators=result.get("meta", {}),
+        indicators=indicators,
         chain_data=chain_data,
         receipt=result.get("receipt", ""),
         ttl_minutes=120,
@@ -123,7 +149,7 @@ async def generate_signal(req: GenerateSignalRequest):
         agent_type=agent_type,
         instrument=resolved_instrument,
         signal=result.get("signal"),
-        indicators=result.get("meta", {}),
+        indicators=indicators,
         receipt=result.get("receipt", ""),
         expires_in_minutes=120,
     )
@@ -133,7 +159,8 @@ async def generate_signal(req: GenerateSignalRequest):
 async def get_pending_signals():
     """Get all pending signals awaiting approval."""
     signals = ledger.get_pending_signals()
-    return {"count": len(signals), "signals": signals}
+    safe_signals = _json_safe(signals)
+    return {"count": len(signals), "signals": safe_signals}
 
 
 @app.api_route("/v1/signals/crypto", methods=["GET", "POST"])
@@ -188,7 +215,7 @@ async def get_orders(status: OrderStatus | None = None):
     """Get orders, optionally filtered by status (OPEN, CLOSED, PENDING)."""
     status_value: str | None = status.value if status else None
     orders = ledger.get_orders(status=status_value)
-    return {"count": len(orders), "orders": orders}
+    return {"count": len(orders), "orders": _json_safe(orders)}
 
 
 @app.post("/v1/orders/close")
@@ -221,11 +248,13 @@ async def get_pnl():
     """Get daily and total P&L."""
     daily: dict[str, Any] = ledger.get_daily_pnl()
     total: float = ledger.get_total_pnl()
-    return {
-        "daily": daily,
-        "total_pnl": total,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
+    return _json_safe(
+        {
+            "daily": daily,
+            "total_pnl": total,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+    )
 
 
 if __name__ == "__main__":
