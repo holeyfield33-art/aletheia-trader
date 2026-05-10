@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import math
 import os
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from agents.crypto_agent import CryptoAgent
@@ -307,6 +310,62 @@ async def get_market_watcher_history(limit: int = Query(default=30, ge=1, le=500
     """Get historical MarketWatcher cycle snapshots."""
     history = market_watcher.history()
     return _json_safe({"count": min(limit, len(history)), "history": history[-limit:]})
+
+
+@app.get("/v1/market-watcher/sentiment-health")
+async def get_market_watcher_sentiment_health():
+    """Get sentiment provider failover/cooldown health metrics."""
+    return _json_safe(market_watcher.sentiment_provider_health())
+
+
+@app.websocket("/v1/market-watcher/stream")
+async def market_watcher_stream(websocket: WebSocket, event: str = "cycle_complete"):
+    """WebSocket stream for live watcher events (`cycle_complete` or `symbol_update`)."""
+    allowed = {"cycle_complete", "symbol_update"}
+    if event not in allowed:
+        await websocket.close(code=1008, reason="Unsupported event")
+        return
+
+    await websocket.accept()
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
+    loop = asyncio.get_running_loop()
+
+    def _enqueue(packet: dict[str, Any]) -> None:
+        if queue.full():
+            with suppress(asyncio.QueueEmpty):
+                queue.get_nowait()
+        queue.put_nowait(packet)
+
+    def _hook(payload: dict[str, Any]) -> None:
+        packet = {
+            "event": event,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "payload": payload,
+        }
+        loop.call_soon_threadsafe(_enqueue, packet)
+
+    hook_id = market_watcher.hooks.register(event, _hook)
+    try:
+        # Initial status frame.
+        await websocket.send_text(
+            json.dumps(
+                _json_safe(
+                    {
+                        "event": "status",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "payload": market_watcher.status(),
+                    }
+                )
+            )
+        )
+
+        while True:
+            packet = await queue.get()
+            await websocket.send_text(json.dumps(_json_safe(packet)))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        market_watcher.hooks.unregister(event, hook_id)
 
 
 @app.post("/v1/market-watcher/start")

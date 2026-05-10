@@ -4,6 +4,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from threading import RLock
 
 import pandas as pd
 import requests
@@ -29,11 +30,28 @@ class MarketDataFeeds:
         self,
         data_manager: DataManager | None = None,
         sentiment_cache_ttl_seconds: float = 300.0,
+        sentiment_failure_threshold: int = 3,
+        sentiment_cooldown_seconds: float = 300.0,
     ) -> None:
         self.data_manager = data_manager or DataManager()
         self.alpha_vantage_api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
         self.sentiment_cache_ttl_seconds = sentiment_cache_ttl_seconds
+        self.sentiment_failure_threshold = sentiment_failure_threshold
+        self.sentiment_cooldown_seconds = sentiment_cooldown_seconds
         self._sentiment_cache: dict[str, tuple[float, str, float]] = {}
+        self._provider_failures: dict[str, int] = {
+            "alt_me_fear_greed": 0,
+            "alpha_vantage_news": 0,
+        }
+        self._provider_blocked_until: dict[str, float] = {
+            "alt_me_fear_greed": 0.0,
+            "alpha_vantage_news": 0.0,
+        }
+        self._provider_last_error: dict[str, str] = {
+            "alt_me_fear_greed": "",
+            "alpha_vantage_news": "",
+        }
+        self._lock = RLock()
 
     def fetch_many(
         self,
@@ -130,18 +148,76 @@ class MarketDataFeeds:
         if cached and now_ts - cached[2] <= self.sentiment_cache_ttl_seconds:
             return cached[0], cached[1]
 
-        if cache_key in {"BTC-USD", "ETH-USD", "BTCUSD", "ETHUSD"}:
-            crypto = self._crypto_fear_greed_sentiment()
-            if crypto is not None:
-                self._sentiment_cache[cache_key] = (crypto[0], crypto[1], now_ts)
-                return crypto
+        providers = self._provider_order(cache_key)
+        for provider in providers:
+            if not self._provider_available(provider):
+                continue
 
-        if self.alpha_vantage_api_key:
-            alpha = self._alpha_vantage_news_sentiment(cache_key)
-            if alpha is not None:
-                self._sentiment_cache[cache_key] = (alpha[0], alpha[1], now_ts)
-                return alpha
+            value = self._fetch_provider_sentiment(provider, cache_key)
+            if value is None:
+                continue
+
+            self._provider_success(provider)
+            self._sentiment_cache[cache_key] = (value[0], value[1], now_ts)
+            return value
         return None
+
+    def sentiment_provider_health(self) -> dict[str, dict[str, object]]:
+        now_ts = time.time()
+        with self._lock:
+            return {
+                provider: {
+                    "failures": failures,
+                    "blocked": self._provider_blocked_until.get(provider, 0.0) > now_ts,
+                    "blocked_seconds_left": max(
+                        self._provider_blocked_until.get(provider, 0.0) - now_ts,
+                        0.0,
+                    ),
+                    "last_error": self._provider_last_error.get(provider, ""),
+                }
+                for provider, failures in self._provider_failures.items()
+            }
+
+    def _provider_order(self, cache_key: str) -> list[str]:
+        if cache_key in {"BTC-USD", "ETH-USD", "BTCUSD", "ETHUSD"}:
+            return ["alt_me_fear_greed", "alpha_vantage_news"]
+        return ["alpha_vantage_news"]
+
+    def _provider_available(self, provider: str) -> bool:
+        if provider == "alpha_vantage_news" and not self.alpha_vantage_api_key:
+            return False
+        with self._lock:
+            blocked_until = self._provider_blocked_until.get(provider, 0.0)
+        return time.time() >= blocked_until
+
+    def _fetch_provider_sentiment(self, provider: str, symbol: str) -> tuple[float, str] | None:
+        if provider == "alt_me_fear_greed":
+            value = self._crypto_fear_greed_sentiment()
+            if value is None:
+                self._provider_failure(provider, "provider returned empty")
+            return value
+        if provider == "alpha_vantage_news":
+            value = self._alpha_vantage_news_sentiment(symbol)
+            if value is None:
+                self._provider_failure(provider, "provider returned empty")
+            return value
+        return None
+
+    def _provider_success(self, provider: str) -> None:
+        with self._lock:
+            self._provider_failures[provider] = 0
+            self._provider_last_error[provider] = ""
+            self._provider_blocked_until[provider] = 0.0
+
+    def _provider_failure(self, provider: str, reason: str) -> None:
+        with self._lock:
+            failures = self._provider_failures.get(provider, 0) + 1
+            self._provider_failures[provider] = failures
+            self._provider_last_error[provider] = reason
+            if failures >= self.sentiment_failure_threshold:
+                self._provider_blocked_until[provider] = (
+                    time.time() + self.sentiment_cooldown_seconds
+                )
 
     def _alpha_vantage_news_sentiment(self, symbol: str) -> tuple[float, str] | None:
         ticker = symbol.replace("/", "").replace("=X", "")
@@ -175,7 +251,8 @@ class MarketDataFeeds:
                 return None
             avg = float(sum(scores) / len(scores))
             return max(-1.0, min(1.0, avg)), "alpha_vantage_news"
-        except Exception:
+        except Exception as exc:
+            self._provider_failure("alpha_vantage_news", str(exc))
             return None
 
     @staticmethod
