@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 from audit.aletheia_wrapper import AletheiaWrapper
 from backtesting.data import DataDownloader
 from backtesting.strategies import STRATEGY_REGISTRY, BaseStrategy
+from risk.manager import PortfolioRiskState, RiskManager
 
 
 @dataclass
@@ -54,6 +55,7 @@ class BacktestRunReport:
     portfolio_equity: pd.Series
     portfolio_drawdown: pd.Series
     portfolio_metrics: dict[str, float]
+    risk_snapshot: dict[str, object]
 
 
 class BacktestEngine:
@@ -65,10 +67,12 @@ class BacktestEngine:
     ) -> None:
         self.downloader = DataDownloader(cache_dir=cache_dir)
         self.auditor = AletheiaWrapper(gateway_url=gateway_url, api_key=api_key)
+        self.risk = RiskManager()
 
     def run(self, config: BacktestConfig) -> BacktestRunReport:
         results: dict[str, BacktestResult] = {}
         equity_curves: list[pd.Series] = []
+        returns_by_asset: dict[str, pd.Series] = {}
 
         for symbol in config.symbols:
             data = self.downloader.download(
@@ -84,6 +88,7 @@ class BacktestEngine:
             result = self._run_single(symbol=symbol, data=data, config=config)
             results[symbol] = result
             equity_curves.append(result.equity_curve.rename(symbol))
+            returns_by_asset[symbol] = result.equity_curve.pct_change().fillna(0.0)
 
         if not equity_curves:
             idx = pd.DatetimeIndex([pd.Timestamp.utcnow()])
@@ -95,12 +100,21 @@ class BacktestEngine:
                 trade_returns=np.array([], dtype=float),
                 timeframe=config.timeframe,
             )
+            empty_state = PortfolioRiskState(
+                equity_curve=portfolio_equity,
+                starting_capital=float(config.initial_cash),
+                current_capital=float(config.initial_cash),
+                open_notional=0.0,
+                day_start_capital=float(config.initial_cash),
+            )
+            risk_snapshot = self.risk.portfolio_risk_snapshot(empty_state, {})
             return BacktestRunReport(
                 config=config,
                 results=results,
                 portfolio_equity=portfolio_equity,
                 portfolio_drawdown=portfolio_drawdown,
                 portfolio_metrics=portfolio_metrics,
+                risk_snapshot=risk_snapshot,
             )
 
         joined = pd.concat(equity_curves, axis=1).ffill().dropna(how="all")
@@ -120,6 +134,16 @@ class BacktestEngine:
             timeframe=config.timeframe,
         )
 
+        day_start_capital = float(portfolio_equity.iloc[-2]) if len(portfolio_equity) > 1 else float(config.initial_cash)
+        risk_state = PortfolioRiskState(
+            equity_curve=portfolio_equity,
+            starting_capital=float(config.initial_cash),
+            current_capital=float(portfolio_equity.iloc[-1]),
+            open_notional=0.0,
+            day_start_capital=day_start_capital,
+        )
+        risk_snapshot = self.risk.portfolio_risk_snapshot(risk_state, returns_by_asset)
+
         self.auditor.audit(
             action="backtest_summary",
             payload={
@@ -129,6 +153,7 @@ class BacktestEngine:
                 "end": config.end,
                 "strategy": config.strategy,
                 "metrics": portfolio_metrics,
+                "risk_snapshot": risk_snapshot,
             },
         )
 
@@ -138,6 +163,7 @@ class BacktestEngine:
             portfolio_equity=portfolio_equity,
             portfolio_drawdown=portfolio_drawdown,
             portfolio_metrics=portfolio_metrics,
+            risk_snapshot=risk_snapshot,
         )
 
     def run_backtest(self, config: BacktestConfig) -> BacktestResult:
@@ -341,6 +367,7 @@ class BacktestEngine:
         payload = {
             "config": asdict(report.config),
             "portfolio_metrics": report.portfolio_metrics,
+            "risk_snapshot": report.risk_snapshot,
             "symbols": {
                 symbol: {
                     "metrics": result.metrics,

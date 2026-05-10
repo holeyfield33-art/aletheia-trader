@@ -44,6 +44,8 @@ def test_vectorized_backtest_report_and_metrics():
     report = engine.run(cfg)
 
     assert report.results
+    assert "limits" in report.risk_snapshot
+    assert "var" in report.risk_snapshot
     for k in [
         "sharpe",
         "sortino",
