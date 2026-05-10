@@ -1,6 +1,6 @@
 [
   {
-    "signal_id": "sig-e122eed7",
+    "signal_id": "sig-914e2a71",
     "agent_type": "forex",
     "instrument": "EUR/USD",
     "signal": "HOLD",
@@ -14,29 +14,29 @@
       "bb_lower": 0.0
     },
     "chain_data": null,
-    "receipt": "mock-1778403494",
-    "created_at": "2026-05-10T08:58:14.259235+00:00",
-    "expires_at": "1778410694",
+    "receipt": "mock-1778404781",
+    "created_at": "2026-05-10T09:19:41.395086+00:00",
+    "expires_at": "1778411981",
     "status": "PENDING"
   },
   {
-    "signal_id": "sig-4ab425fa",
+    "signal_id": "sig-d0fa2261",
     "agent_type": "forex",
     "instrument": "EUR/USD",
     "signal": "HOLD",
     "indicators": {
-      "rsi": 50.0,
-      "macd": 0.05924933170439317,
-      "macd_signal": 0.06353307580844873,
-      "macd_hist": -0.004283744104055562,
-      "bb_upper": 0.0,
-      "bb_mid": 0.0,
-      "bb_lower": 0.0
+      "rsi": 72.58064516129029,
+      "macd": 0.20952361424099308,
+      "macd_signal": -0.13494051360701306,
+      "macd_hist": 0.3444641278480062,
+      "bb_upper": 101.37037145287266,
+      "bb_mid": 98.48499999999999,
+      "bb_lower": 95.59962854712731
     },
     "chain_data": null,
-    "receipt": "mock-1778403541",
-    "created_at": "2026-05-10T08:59:01.090723+00:00",
-    "expires_at": "1778410741",
+    "receipt": "mock-1778405262",
+    "created_at": "2026-05-10T09:27:42.038167+00:00",
+    "expires_at": "1778412462",
     "status": "PENDING"
   }
 ]
