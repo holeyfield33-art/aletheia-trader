@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from backtesting.engine import BacktestConfig, BacktestEngine
+
 try:
     from streamlit_autorefresh import st_autorefresh
 except ModuleNotFoundError:
@@ -105,6 +107,40 @@ def render_filtered_signal(data: dict) -> None:
     with st.expander("🔬 View Raw Indicators", expanded=False):
         st.json(data.get("indicators", {}))
 
+
+def render_signal_quality(data: dict) -> None:
+    confidence = float(data.get("confidence_score", 0.0) or 0.0)
+    regime = str(data.get("regime", "unknown") or "unknown").upper()
+    recommended_size = float(data.get("recommended_size", 0.0) or 0.0)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Confidence", f"{confidence:.1f}/100")
+    c2.metric("Regime", regime)
+    c3.metric("Recommended Size", f"{recommended_size:.2f}")
+
+
+def render_monthly_heatmap(monthly: pd.DataFrame, symbol: str) -> None:
+    if monthly.empty:
+        st.info("No monthly returns to visualize yet.")
+        return
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=(monthly * 100.0).fillna(0.0).values,
+            x=list(monthly.columns),
+            y=[str(y) for y in monthly.index.tolist()],
+            colorscale="RdYlGn",
+            colorbar={"title": "%"},
+        )
+    )
+    fig.update_layout(
+        title=f"Monthly Returns Heatmap: {symbol}",
+        xaxis_title="Month",
+        yaxis_title="Year",
+        template="plotly_dark",
+        height=420,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
 def check_api() -> tuple[bool, str]:
     try:
         resp = requests.get(f"{API_BASE}/health", timeout=REQUEST_TIMEOUT_SECONDS)
@@ -117,7 +153,19 @@ with st.sidebar:
     st.divider()
     protection = st.toggle("**🔐 Live Aletheia Protection**", value=True)
     st.divider()
-    page = st.radio("**Navigate To:**", ["📊 Dashboard", "🚀 Signal Generator", "⏳ Pending Approvals", "📈 Trade History", "📉 Analytics", "⚙️ Settings"], label_visibility="collapsed")
+    page = st.radio(
+        "**Navigate To:**",
+        [
+            "📊 Dashboard",
+            "🚀 Signal Generator",
+            "🧪 Backtesting Lab",
+            "⏳ Pending Approvals",
+            "📈 Trade History",
+            "📉 Analytics",
+            "⚙️ Settings",
+        ],
+        label_visibility="collapsed",
+    )
     st.divider()
     api_ok, status = check_api()
     if api_ok:
@@ -132,7 +180,7 @@ with st.sidebar:
     st.divider()
     st.caption("Aletheia Trader v1.0.1")
 
-if not api_ok and "Settings" not in page:
+if not api_ok and page not in {"⚙️ Settings", "🧪 Backtesting Lab"}:
     st.error("🔴 API Unavailable")
     st.code("uvicorn api.server:app --host 0.0.0.0 --port 8000", language="bash")
     st.stop()
@@ -198,14 +246,151 @@ elif page == "🚀 Signal Generator":
                     data = resp.json()
                     if data.get("filtered"):
                         render_filtered_signal(data)
+                        render_signal_quality(data)
                     else:
                         st.balloons()
                         st.success(f"✅ Valid Signal: **{data['signal']}** — ID: {data['signal_id']}")
+                        st.caption("Validation status: Passed strict filters")
+                        render_signal_quality(data)
                         st.json(data.get("indicators", {}))
                 else:
                     st.error(f"API error {resp.status_code}: {resp.text[:120]}")
             except Exception as e:
                 st.error(f"Error: {str(e)[:60]}")
+
+elif page == "🧪 Backtesting Lab":
+    render_header()
+    st.markdown("### 🧪 Backtesting Lab")
+    st.caption("Vectorized strategy research with risk snapshot, optimization, and walk-forward analysis.")
+
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            symbol_text = st.text_input("Symbols (comma-separated)", value="EURUSD,BTC-USD,SPY")
+            strategy_name = st.selectbox("Strategy", ["macd_rsi"])
+            timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
+        with c2:
+            start_date = st.date_input("Start", value=datetime(2023, 1, 1))
+            end_date = st.date_input("End", value=datetime(2025, 1, 1))
+            initial_cash = st.number_input("Initial Cash", min_value=1000.0, value=100000.0, step=1000.0)
+        with c3:
+            commission_bps = st.number_input("Commission (bps)", min_value=0.0, value=2.0, step=0.1)
+            slippage_bps = st.number_input("Slippage (bps)", min_value=0.0, value=1.0, step=0.1)
+            spread_bps = st.number_input("Spread (bps)", min_value=0.0, value=1.5, step=0.1)
+            risk_per_trade = st.number_input("Risk / Trade", min_value=0.001, max_value=0.05, value=0.01, step=0.001)
+
+    opt_col, wf_col, run_col = st.columns([1, 1, 2])
+    run_opt = opt_col.checkbox("Run Optimization", value=True)
+    run_wf = wf_col.checkbox("Run Walk-Forward", value=True)
+
+    if run_col.button("▶ Run Backtest", type="primary", use_container_width=True):
+        symbols = [s.strip() for s in symbol_text.split(",") if s.strip()]
+        cfg = BacktestConfig(
+            symbols=symbols,
+            timeframe=timeframe,
+            start=start_date.isoformat(),
+            end=end_date.isoformat(),
+            strategy=strategy_name,
+            strategy_params={"risk_per_trade": risk_per_trade},
+            initial_cash=initial_cash,
+            commission_bps=commission_bps,
+            slippage_bps=slippage_bps,
+            spread_bps=spread_bps,
+            risk_per_trade=risk_per_trade,
+        )
+
+        with st.spinner("Running vectorized backtest..."):
+            engine = BacktestEngine()
+            report = engine.run(cfg)
+            payload: dict[str, object] = {"engine": engine, "report": report, "config": cfg}
+
+            if run_opt and symbols:
+                payload["optimization"] = engine.optimize(
+                    cfg,
+                    symbol=symbols[0],
+                    param_grid={
+                        "rsi_buy": [30, 35, 40],
+                        "rsi_sell": [60, 65, 70],
+                        "trend_threshold": [0.0, 0.002, 0.004],
+                    },
+                )
+
+            if run_wf and symbols:
+                payload["walk_forward"] = engine.walk_forward(
+                    cfg,
+                    symbol=symbols[0],
+                    param_grid={
+                        "rsi_buy": [30, 35],
+                        "rsi_sell": [65, 70],
+                    },
+                    train_bars=300,
+                    test_bars=120,
+                    step_bars=120,
+                )
+
+            st.session_state["bt_payload"] = payload
+
+    payload = st.session_state.get("bt_payload")
+    if payload:
+        engine: BacktestEngine = payload["engine"]
+        report = payload["report"]
+
+        st.markdown("---\n### 📌 Portfolio Summary")
+        p = report.portfolio_metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Sharpe", f"{p.get('sharpe', 0.0):.2f}")
+        c2.metric("Sortino", f"{p.get('sortino', 0.0):.2f}")
+        c3.metric("Calmar", f"{p.get('calmar', 0.0):.2f}")
+        c4.metric("Max DD", f"{p.get('max_drawdown', 0.0) * 100:.2f}%")
+
+        risk = report.risk_snapshot
+        st.markdown("### 🛡️ Risk Snapshot")
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("VaR", f"{float(risk.get('var', 0.0)) * 100:.2f}%")
+        r2.metric("CVaR", f"{float(risk.get('cvar', 0.0)) * 100:.2f}%")
+        r3.metric("Open Notional", f"{float(risk.get('open_notional_pct', 0.0)) * 100:.2f}%")
+        limits = risk.get("limits", {}) if isinstance(risk, dict) else {}
+        r4.metric("Risk Gate", "OPEN" if limits.get("allow_new_risk", True) else "HALTED")
+
+        symbols_available = list(report.results.keys())
+        if not symbols_available:
+            st.warning("No symbols produced backtest results. Check symbol inputs and date range.")
+        else:
+            selected = st.selectbox("Inspect Symbol", symbols_available)
+            result = report.results[selected]
+
+            left, right = st.columns(2)
+            left.plotly_chart(engine.build_equity_curve_figure(result), use_container_width=True)
+            right.plotly_chart(engine.build_drawdown_figure(result), use_container_width=True)
+
+            render_monthly_heatmap(result.monthly_returns_heatmap, selected)
+
+            st.markdown("### 📄 Performance Tear Sheet")
+            tear_rows = {
+                **result.metrics,
+                **{f"mc_{k}": v for k, v in result.monte_carlo.items()},
+                "risk_var": float(risk.get("var", 0.0)),
+                "risk_cvar": float(risk.get("cvar", 0.0)),
+            }
+            tear_df = pd.DataFrame(
+                [{"metric": k, "value": v} for k, v in tear_rows.items()]
+            )
+            st.dataframe(tear_df, use_container_width=True, hide_index=True)
+
+            st.markdown("### 📚 Trade Log")
+            st.dataframe(result.trades.tail(200), use_container_width=True)
+
+        if "optimization" in payload and isinstance(payload["optimization"], pd.DataFrame):
+            st.markdown("### 🧬 Parameter Optimization")
+            st.dataframe(payload["optimization"].head(20), use_container_width=True)
+
+        if "walk_forward" in payload and isinstance(payload["walk_forward"], dict):
+            st.markdown("### 🔁 Walk-Forward")
+            wf = payload["walk_forward"]
+            st.json(wf.get("summary", {}))
+            windows = wf.get("windows", [])
+            if windows:
+                st.dataframe(pd.DataFrame(windows), use_container_width=True)
 
 elif page == "⏳ Pending Approvals":
     render_header()
