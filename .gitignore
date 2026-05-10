@@ -1,6 +1,34 @@
 .env
-venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-data/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Notebook and editor state
+.ipynb_checkpoints/
+.DS_Store
+.vscode/settings.json
+
+# Runtime logs
+*.log
+
+# Local runtime data (keep tracked files under data/)
+data/*.tmp
+data/*.bak
+data/simulated_orders.json
