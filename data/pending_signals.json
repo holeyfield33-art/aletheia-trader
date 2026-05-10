@@ -1,135 +1,5 @@
 [
   {
-    "signal_id": "sig-290a1e40",
-    "agent_type": "options",
-    "instrument": "SPY",
-    "signal": "HOLD",
-    "indicators": {
-      "rsi": 23.941842872430726,
-      "macd": -0.3949493033737781,
-      "macd_signal": -0.33380442875150995,
-      "macd_hist": -0.06114487462226814,
-      "bb_upper": 716.105324102106,
-      "bb_mid": 712.0812438964844,
-      "bb_lower": 708.0571636908627
-    },
-    "chain_data": {
-      "expirations": [
-        "2026-04-29",
-        "2026-04-30",
-        "2026-05-01"
-      ],
-      "chains": {
-        "2026-04-29": {
-          "category": "0DTE",
-          "num_calls": 119,
-          "num_puts": 130,
-          "call_volume": 452633,
-          "put_volume": 528918,
-          "atm_call_strike": 525.0,
-          "atm_put_strike": 500.0
-        },
-        "2026-04-30": {
-          "category": "0DTE",
-          "num_calls": 212,
-          "num_puts": 194,
-          "call_volume": 121670,
-          "put_volume": 150381,
-          "atm_call_strike": 430.0,
-          "atm_put_strike": 430.0
-        },
-        "2026-05-01": {
-          "category": "weekly",
-          "num_calls": 192,
-          "num_puts": 190,
-          "call_volume": 207280,
-          "put_volume": 235110,
-          "atm_call_strike": 400.0,
-          "atm_put_strike": 400.0
-        }
-      }
-    },
-    "receipt": "mock-1777471071",
-    "created_at": "2026-04-29T13:57:51.912358+00:00",
-    "expires_at": "1777478272",
-    "status": "PENDING"
-  },
-  {
-    "signal_id": "sig-a2ecddeb",
-    "agent_type": "forex",
-    "instrument": "EUR/USD",
-    "signal": "HOLD",
-    "indicators": {
-      "rsi": 25.005203274594137,
-      "macd": -0.03989913083346153,
-      "macd_signal": -0.019387316077046798,
-      "macd_hist": -0.02051181475641473,
-      "bb_upper": 108.20430637332281,
-      "bb_mid": 108.0552547454834,
-      "bb_lower": 107.90620311764398
-    },
-    "chain_data": null,
-    "receipt": "mock-1777471149",
-    "created_at": "2026-04-29T13:59:09.969480+00:00",
-    "expires_at": "1777478350",
-    "status": "PENDING"
-  },
-  {
-    "signal_id": "sig-12731b41",
-    "agent_type": "options",
-    "instrument": "SPY",
-    "signal": "HOLD",
-    "indicators": {
-      "rsi": 23.4041325176036,
-      "macd": -0.41010619328642406,
-      "macd_signal": -0.3368358067340392,
-      "macd_hist": -0.07327038655238488,
-      "bb_upper": 716.108938891988,
-      "bb_mid": 712.071743774414,
-      "bb_lower": 708.03454865684
-    },
-    "chain_data": {
-      "expirations": [
-        "2026-04-29",
-        "2026-04-30",
-        "2026-05-01"
-      ],
-      "chains": {
-        "2026-04-29": {
-          "category": "0DTE",
-          "num_calls": 119,
-          "num_puts": 130,
-          "call_volume": 452633,
-          "put_volume": 528918,
-          "atm_call_strike": 525.0,
-          "atm_put_strike": 500.0
-        },
-        "2026-04-30": {
-          "category": "0DTE",
-          "num_calls": 212,
-          "num_puts": 194,
-          "call_volume": 121670,
-          "put_volume": 150381,
-          "atm_call_strike": 430.0,
-          "atm_put_strike": 430.0
-        },
-        "2026-05-01": {
-          "category": "weekly",
-          "num_calls": 192,
-          "num_puts": 190,
-          "call_volume": 207280,
-          "put_volume": 235110,
-          "atm_call_strike": 400.0,
-          "atm_put_strike": 400.0
-        }
-      }
-    },
-    "receipt": "mock-1777471151",
-    "created_at": "2026-04-29T13:59:11.163227+00:00",
-    "expires_at": "1777478351",
-    "status": "PENDING"
-  },
-  {
     "signal_id": "sig-e122eed7",
     "agent_type": "forex",
     "instrument": "EUR/USD",
@@ -139,9 +9,9 @@
       "macd": 0.05924933170439317,
       "macd_signal": 0.06353307580844873,
       "macd_hist": -0.004283744104055562,
-      "bb_upper": NaN,
-      "bb_mid": NaN,
-      "bb_lower": NaN
+      "bb_upper": 0.0,
+      "bb_mid": 0.0,
+      "bb_lower": 0.0
     },
     "chain_data": null,
     "receipt": "mock-1778403494",
