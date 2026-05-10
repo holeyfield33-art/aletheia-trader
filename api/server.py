@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from agents.crypto_agent import CryptoAgent
 from agents.forex_agent import ForexAgent
-from agents.market_watcher import MarketWatcher, MarketWatcherConfig
+from agents.market_watcher import MarketWatcher
 from agents.options_agent import OptionsAgent
 from agents.signal_engine import NO_SIGNAL
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
