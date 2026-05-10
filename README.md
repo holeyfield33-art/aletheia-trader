@@ -121,6 +121,18 @@ Optional run-once mode:
 python -m market_watcher.run --run-once --symbols EUR/USD SPY BTC-USD --timeframe 1h
 ```
 
+Optional async run-once mode:
+
+```bash
+python -m market_watcher.run --run-once-async --symbols EUR/USD SPY BTC-USD
+```
+
+Optional terminal command-center output:
+
+```bash
+python -m market_watcher.run --terminal-dashboard
+```
+
 Configuration can be provided via environment variables (`MARKET_WATCHER_*`) or an optional YAML/JSON config file:
 
 ```bash
@@ -161,6 +173,11 @@ Environment variables:
 - `ALETHEIA_GATEWAY` optional gateway URL
 - `GATEWAY_API_KEY` optional gateway key
 - `API_AUTH_KEY` optional API auth key for `X-API-Key` header
+- `MARKET_WATCHER_SYMBOLS` optional comma-separated symbols for watcher runtime
+- `MARKET_WATCHER_TIMEFRAME` optional watcher timeframe (default `1h`)
+- `MARKET_WATCHER_LOOKBACK` optional watcher lookback window (default `30d`)
+- `MARKET_WATCHER_POLL_SECONDS` optional watcher poll interval
+- `ALPHA_VANTAGE_API_KEY` optional sentiment/news provider key
 
 Streamlit defaults are in `.streamlit/config.toml`.
 

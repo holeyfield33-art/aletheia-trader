@@ -1,24 +1,72 @@
-🎯 ALETHEIA TRADER - OPERATIONAL SYSTEM COMPLETE
-================================================
+ALETHEIA TRADER - OPERATIONAL STATUS
+====================================
 
-STATUS: ✅ FULLY OPERATIONAL
-Last Update: 2026-04-28
-Commit: ac90425
+STATUS: OPERATIONAL
+Last Update: 2026-05-10
+Baseline Branch: main
 
 SYSTEM OVERVIEW
 ===============
 
-Aletheia Trader is a **signal-first trading platform** with:
-✓ Forex signal generation (EUR/USD, GBP/USD, USD/JPY)
-✓ Options signal generation (SPY, QQQ with 0DTE analysis)
-✓ Manual approval workflow (120-min TTL per signal)
-✓ Paper trading simulator with order execution
-✓ Real-time P&L tracking (daily + total)
-✓ Complete audit trail with receipt IDs
-✓ REST API backend (FastAPI, 10 endpoints)
-✓ Interactive dashboard (Streamlit, 5 pages)
-✓ JSON-based persistent storage
-✓ 100% test coverage for signal generation
+Aletheia Trader is a signal-first, human-in-the-loop trading platform with:
+- Forex, options, and crypto signal generation
+- Manual approval gate with TTL-based pending signals
+- Paper order lifecycle and P&L analytics
+- Aletheia Core audit wrapping for decision flows
+- Professional Market Watcher service with heartbeat and live diagnostics
+- Streamlit dashboard and FastAPI API surface
+
+CURRENT CAPABILITIES
+====================
+
+Core Trading:
+- Signal generation (`/v1/signals/generate`, `/v1/signals/crypto`)
+- Approval/rejection workflow (`/v1/signals/approve`, `/v1/signals/reject`)
+- Order management (`/v1/orders`, `/v1/orders/close`)
+- Daily and total P&L analytics (`/v1/analytics/pnl`)
+
+Market Watcher:
+- Continuous background monitoring with heartbeat
+- Multi-asset diagnostics (price, volume, volatility, correlation, anomaly)
+- Regime detection and multi-timeframe confirmation
+- Sentiment provider failover with cooldown and health tracking
+- Live hooks and stream endpoint (`/v1/market-watcher/stream`)
+- Status/history/health endpoints:
+  - `/v1/market-watcher/status`
+  - `/v1/market-watcher/history`
+  - `/v1/market-watcher/sentiment-health`
+
+Architecture Packages:
+- `market_watcher/`: orchestrator, feeds, regimes, signals, alerts, monitoring
+- `core/`: Aletheia guard abstraction
+- `agents/`: strategy/signal agents and compatibility exports
+- `api/`: FastAPI surface
+- `dashboard/`: Streamlit command center
+
+QUALITY STATUS
+==============
+
+Validated locally with:
+- `ruff check .`
+- `black --check .`
+- `mypy agents api audit backtesting brokers core dashboard market_watcher risk scripts`
+- `pytest`
+
+DEPLOYMENT MODES
+================
+
+Local:
+- `./run_system.sh` (API + dashboard)
+- `python -m market_watcher.run` (watcher service)
+
+Containerized:
+- `docker compose up --build`
+
+NOTES
+=====
+
+- This file reflects current runtime posture and major service surfaces.
+- For release-specific changes, refer to `CHANGELOG.md`.
 
 TECHNICAL STACK
 ===============

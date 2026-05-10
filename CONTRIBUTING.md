@@ -15,7 +15,7 @@ Thanks for contributing.
    ruff check .
    black .
    isort .
-   mypy agents api audit brokers dashboard scripts
+   mypy agents api audit backtesting brokers core dashboard market_watcher risk scripts
    pytest -q
    ```
 
@@ -23,6 +23,7 @@ Thanks for contributing.
 
 - Keep changes focused and small.
 - Preserve human-in-the-loop paper-trading behavior.
+- Keep Aletheia audit integration mandatory for signal/order decisions.
 - Add or update tests for behavioral changes.
 - Document API or UX changes in README or docstrings.
 

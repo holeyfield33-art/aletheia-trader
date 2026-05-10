@@ -19,3 +19,6 @@ We will acknowledge reports within 3 business days and provide regular status up
 - Optional API key protection for API access.
 - Audit receipts attached to signal generation and decisions.
 - Input validation for prices, quantities, symbols, and order state transitions.
+- Market Watcher decisions and published signals route through `core/aletheia_guard.py`.
+- WebSocket market watcher stream endpoint exists at `/v1/market-watcher/stream`; deploy behind trusted network boundaries if API auth is disabled.
+- Sentiment providers are failover-aware with cooldown to reduce repeated dependency failures.
