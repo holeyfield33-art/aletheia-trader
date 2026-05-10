@@ -200,6 +200,35 @@ def normalize_date_input(value: date | tuple[date, ...] | None) -> date:
     return datetime.now().date()
 
 
+def render_correlation_heatmap(corr_payload: dict[str, Any]) -> None:
+    if not corr_payload:
+        st.info("Correlation matrix is not available yet.")
+        return
+
+    corr_df = pd.DataFrame(corr_payload)
+    if corr_df.empty:
+        st.info("Correlation matrix is not available yet.")
+        return
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=corr_df.values,
+            x=list(corr_df.columns),
+            y=list(corr_df.index),
+            zmin=-1,
+            zmax=1,
+            colorscale="RdBu",
+            colorbar={"title": "Corr"},
+        )
+    )
+    fig.update_layout(
+        title="Cross-Asset Correlation Heatmap",
+        template="plotly_dark",
+        height=420,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 # Sidebar
 with st.sidebar:
     st.markdown("### 🏢 Aletheia Trader")
@@ -211,6 +240,7 @@ with st.sidebar:
         [
             "📊 Dashboard",
             "🚀 Signal Generator",
+            "👁️ Market Watcher",
             "🧪 Backtesting Lab",
             "⏳ Pending Approvals",
             "📈 Trade History",
@@ -338,6 +368,127 @@ elif page == "🚀 Signal Generator":
                     st.error(f"API error {resp.status_code}: {resp.text[:120]}")
             except Exception as e:
                 st.error(f"Error: {str(e)[:60]}")
+
+elif page == "👁️ Market Watcher":
+    render_header()
+    st.markdown("### 👁️ Market Watcher")
+    st.caption("Background market diagnostics orchestrator with Aletheia-protected signal publication.")
+
+    control_col1, control_col2, control_col3, control_col4 = st.columns([1.5, 1.5, 2, 2])
+    symbols_text = control_col1.text_input("Symbols", value="EUR/USD,SPY,BTC-USD")
+    timeframe_choice = control_col2.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
+    poll_seconds = control_col3.number_input(
+        "Poll (seconds)", min_value=5.0, value=60.0, step=5.0
+    )
+    lookback = control_col4.text_input("Lookback", value="30d")
+
+    start_payload = {
+        "symbols": [s.strip().upper() for s in symbols_text.split(",") if s.strip()],
+        "timeframe": timeframe_choice,
+        "poll_interval_seconds": float(poll_seconds),
+        "lookback_period": lookback,
+    }
+
+    action_col1, action_col2, action_col3 = st.columns(3)
+    if action_col1.button("▶ Start Watcher", type="primary", use_container_width=True):
+        try:
+            requests.post(
+                f"{API_BASE}/v1/market-watcher/start",
+                json=start_payload,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            st.success("MarketWatcher started")
+        except Exception as e:
+            st.error(f"Failed to start watcher: {str(e)[:80]}")
+
+    if action_col2.button("⏹ Stop Watcher", use_container_width=True):
+        try:
+            requests.post(f"{API_BASE}/v1/market-watcher/stop", timeout=REQUEST_TIMEOUT_SECONDS)
+            st.success("MarketWatcher stopped")
+        except Exception as e:
+            st.error(f"Failed to stop watcher: {str(e)[:80]}")
+
+    if action_col3.button("⚡ Run One Cycle", use_container_width=True):
+        try:
+            requests.post(
+                f"{API_BASE}/v1/market-watcher/run-once",
+                json=start_payload,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            st.success("Single cycle completed")
+        except Exception as e:
+            st.error(f"Run-once failed: {str(e)[:80]}")
+
+    try:
+        status = requests.get(
+            f"{API_BASE}/v1/market-watcher/status", timeout=REQUEST_TIMEOUT_SECONDS
+        ).json()
+        snapshot = status.get("latest_snapshot") or {}
+        symbols = snapshot.get("symbols") or []
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("State", "RUNNING" if status.get("running") else "STOPPED")
+        k2.metric("Cycles", str(status.get("cycle_count", 0)))
+        k3.metric("Heartbeat Lag (s)", f"{_as_float(status.get('seconds_since_heartbeat')):.1f}")
+        k4.metric("Last Error", str(status.get("last_error") or "none")[:18])
+
+        st.markdown("### Symbol Diagnostics")
+        if symbols:
+            symbol_df = pd.DataFrame(symbols)
+            display_cols = [
+                "symbol",
+                "signal",
+                "confidence",
+                "volatility_regime",
+                "sentiment_label",
+                "sentiment_source",
+                "anomaly_score",
+                "correlation_penalty",
+                "source_backend",
+            ]
+            cols = [c for c in display_cols if c in symbol_df.columns]
+            st.dataframe(symbol_df[cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("No MarketWatcher snapshots yet. Start the watcher or run one cycle.")
+
+        st.markdown("### Correlation Map")
+        render_correlation_heatmap(snapshot.get("correlation_matrix") or {})
+
+        history_payload = requests.get(
+            f"{API_BASE}/v1/market-watcher/history?limit=60", timeout=REQUEST_TIMEOUT_SECONDS
+        ).json()
+        history = history_payload.get("history") or []
+        if history:
+            points: list[dict[str, Any]] = []
+            for row in history:
+                ts = row.get("timestamp")
+                sym_rows = row.get("symbols") or []
+                avg_anomaly = 0.0
+                if sym_rows:
+                    avg_anomaly = sum(_as_float(s.get("anomaly_score")) for s in sym_rows) / len(sym_rows)
+                points.append({"timestamp": ts, "avg_anomaly": avg_anomaly})
+            trend_df = pd.DataFrame(points)
+            trend_df["timestamp"] = pd.to_datetime(trend_df["timestamp"], errors="coerce")
+            trend_df = trend_df.dropna()
+            if not trend_df.empty:
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=trend_df["timestamp"],
+                        y=trend_df["avg_anomaly"],
+                        mode="lines+markers",
+                        name="Avg anomaly",
+                        line={"color": COLORS["warning"], "width": 2},
+                    )
+                )
+                fig.update_layout(
+                    title="Anomaly Pulse (Last 60 Cycles)",
+                    template="plotly_dark",
+                    height=320,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"MarketWatcher panel error: {str(e)[:80]}")
 
 elif page == "🧪 Backtesting Lab":
     render_header()
