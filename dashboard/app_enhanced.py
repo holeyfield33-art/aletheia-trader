@@ -372,14 +372,14 @@ elif page == "🚀 Signal Generator":
 elif page == "👁️ Market Watcher":
     render_header()
     st.markdown("### 👁️ Market Watcher")
-    st.caption("Background market diagnostics orchestrator with Aletheia-protected signal publication.")
+    st.caption(
+        "Background market diagnostics orchestrator with Aletheia-protected signal publication."
+    )
 
     control_col1, control_col2, control_col3, control_col4 = st.columns([1.5, 1.5, 2, 2])
     symbols_text = control_col1.text_input("Symbols", value="EUR/USD,SPY,BTC-USD")
     timeframe_choice = control_col2.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
-    poll_seconds = control_col3.number_input(
-        "Poll (seconds)", min_value=5.0, value=60.0, step=5.0
-    )
+    poll_seconds = control_col3.number_input("Poll (seconds)", min_value=5.0, value=60.0, step=5.0)
     lookback = control_col4.text_input("Lookback", value="30d")
 
     start_payload = {
@@ -465,7 +465,9 @@ elif page == "👁️ Market Watcher":
                 sym_rows = row.get("symbols") or []
                 avg_anomaly = 0.0
                 if sym_rows:
-                    avg_anomaly = sum(_as_float(s.get("anomaly_score")) for s in sym_rows) / len(sym_rows)
+                    avg_anomaly = sum(_as_float(s.get("anomaly_score")) for s in sym_rows) / len(
+                        sym_rows
+                    )
                 points.append({"timestamp": ts, "avg_anomaly": avg_anomaly})
             trend_df = pd.DataFrame(points)
             trend_df["timestamp"] = pd.to_datetime(trend_df["timestamp"], errors="coerce")

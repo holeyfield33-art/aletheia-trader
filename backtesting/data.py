@@ -32,9 +32,7 @@ class DataManager:
         self.backend_order = self._clean_backend_order(backend_order or self._env_backend_order())
         self.polygon_api_key = polygon_api_key or os.getenv("POLYGON_API_KEY", "")
         self.fmp_api_key = fmp_api_key or os.getenv("FMP_API_KEY", "")
-        self.alpha_vantage_api_key = alpha_vantage_api_key or os.getenv(
-            "ALPHA_VANTAGE_API_KEY", ""
-        )
+        self.alpha_vantage_api_key = alpha_vantage_api_key or os.getenv("ALPHA_VANTAGE_API_KEY", "")
         self.auditor = AletheiaWrapper(gateway_url=gateway_url, api_key=api_key)
 
     @staticmethod
@@ -248,7 +246,12 @@ class DataManager:
                 "https://api.polygon.io/v2/aggs/ticker/"
                 f"{polygon_symbol}/range/{multiplier}/{timespan}/{start}/{end}"
             ),
-            params={"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": self.polygon_api_key},
+            params={
+                "adjusted": "true",
+                "sort": "asc",
+                "limit": 50000,
+                "apiKey": self.polygon_api_key,
+            },
             timeout=10,
         )
         response.raise_for_status()
@@ -289,7 +292,9 @@ class DataManager:
             payload = response.json()
             rows = payload.get("historical", [])
         else:
-            url = f"https://financialmodelingprep.com/api/v3/historical-chart/{interval}/{normalized}"
+            url = (
+                f"https://financialmodelingprep.com/api/v3/historical-chart/{interval}/{normalized}"
+            )
             params = {"from": start, "to": end, "apikey": self.fmp_api_key}
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
@@ -409,7 +414,9 @@ class DataManager:
                 out[column] = 0.0
 
         out = out[["open", "high", "low", "close", "volume"]].copy()
-        out = out.apply(pd.to_numeric, errors="coerce").dropna(subset=["open", "high", "low", "close"])
+        out = out.apply(pd.to_numeric, errors="coerce").dropna(
+            subset=["open", "high", "low", "close"]
+        )
         out["volume"] = out["volume"].fillna(0.0)
         out = out.sort_index()
         return out

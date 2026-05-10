@@ -25,7 +25,9 @@ def test_data_manager_falls_through_backend_order(tmp_path):
     def fake_enabled(backend: str) -> bool:
         return backend in {"polygon", "yfinance"}
 
-    def fake_fetch(*, backend: str, symbol: str, timeframe: str, start: str, end: str) -> pd.DataFrame:
+    def fake_fetch(
+        *, backend: str, symbol: str, timeframe: str, start: str, end: str
+    ) -> pd.DataFrame:
         del symbol, timeframe, start, end
         if backend == "polygon":
             return pd.DataFrame()
@@ -51,7 +53,9 @@ def test_data_manager_reuses_cache_before_refetch(tmp_path):
     manager = DataManager(cache_dir=tmp_path, backend_order=["yfinance"])
     calls = {"count": 0}
 
-    def fake_fetch(*, backend: str, symbol: str, timeframe: str, start: str, end: str) -> pd.DataFrame:
+    def fake_fetch(
+        *, backend: str, symbol: str, timeframe: str, start: str, end: str
+    ) -> pd.DataFrame:
         del backend, symbol, timeframe, start, end
         calls["count"] += 1
         return _sample_ohlcv()

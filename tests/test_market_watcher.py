@@ -36,7 +36,15 @@ def test_market_watcher_run_cycle_collects_metrics_and_publishes_signal(tmp_path
 
     sample = _sample_market_frame()
 
-    def fake_download(*, symbol: str, timeframe: str, start: str, end: str, use_cache: bool = True, backend_order=None):
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
         del symbol, timeframe, start, end, use_cache, backend_order
         frame = sample.copy()
         frame.attrs["source_backend"] = "test"
@@ -80,7 +88,15 @@ def test_market_watcher_background_loop_updates_heartbeat(tmp_path):
 
     sample = _sample_market_frame()
 
-    def fake_download(*, symbol: str, timeframe: str, start: str, end: str, use_cache: bool = True, backend_order=None):
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
         del symbol, timeframe, start, end, use_cache, backend_order
         frame = sample.copy()
         frame.attrs["source_backend"] = "test"
@@ -124,7 +140,15 @@ def test_market_watcher_uses_external_sentiment_feed_when_available(tmp_path):
 
     sample = _sample_market_frame()
 
-    def fake_download(*, symbol: str, timeframe: str, start: str, end: str, use_cache: bool = True, backend_order=None):
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
         del symbol, timeframe, start, end, use_cache, backend_order
         frame = sample.copy()
         frame.attrs["source_backend"] = "test"

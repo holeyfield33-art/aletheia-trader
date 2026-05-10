@@ -69,7 +69,9 @@ class MarketWatcher:
             if self._thread and self._thread.is_alive():
                 return self.status()
             self._stop_event.clear()
-            self._thread = threading.Thread(target=self._run_loop, name="market-watcher", daemon=True)
+            self._thread = threading.Thread(
+                target=self._run_loop, name="market-watcher", daemon=True
+            )
             self._thread.start()
             return self.status()
 
@@ -110,7 +112,9 @@ class MarketWatcher:
             "heartbeat": end.isoformat(),
             "timeframe": self.config.timeframe,
             "symbols": [],
-            "correlation_matrix": correlation_matrix.round(4).to_dict() if not correlation_matrix.empty else {},
+            "correlation_matrix": (
+                correlation_matrix.round(4).to_dict() if not correlation_matrix.empty else {}
+            ),
             "fetch_failures": fetch_failures,
         }
 
@@ -273,7 +277,10 @@ class MarketWatcher:
         if len(close) < 6:
             return 0.0, "price_proxy"
         short_return = float(close.iloc[-1] / close.iloc[-6] - 1.0)
-        trend = close.ewm(span=8, adjust=False).mean().iloc[-1] - close.ewm(span=21, adjust=False).mean().iloc[-1]
+        trend = (
+            close.ewm(span=8, adjust=False).mean().iloc[-1]
+            - close.ewm(span=21, adjust=False).mean().iloc[-1]
+        )
         baseline = abs(float(close.iloc[-1])) or 1.0
         score = math.tanh((short_return * 10.0) + (float(trend) / baseline * 20.0))
         return round(score, 4), "price_proxy"
@@ -341,7 +348,9 @@ class MarketWatcher:
     @staticmethod
     def _crypto_fear_greed_sentiment() -> tuple[float, str] | None:
         try:
-            response = requests.get("https://api.alternative.me/fng/", params={"limit": 1}, timeout=6)
+            response = requests.get(
+                "https://api.alternative.me/fng/", params={"limit": 1}, timeout=6
+            )
             response.raise_for_status()
             payload = response.json()
             data = payload.get("data", [])
@@ -358,7 +367,10 @@ class MarketWatcher:
         if len(close) < 6:
             return 0.0
         short_return = float(close.iloc[-1] / close.iloc[-6] - 1.0)
-        trend = close.ewm(span=8, adjust=False).mean().iloc[-1] - close.ewm(span=21, adjust=False).mean().iloc[-1]
+        trend = (
+            close.ewm(span=8, adjust=False).mean().iloc[-1]
+            - close.ewm(span=21, adjust=False).mean().iloc[-1]
+        )
         baseline = abs(float(close.iloc[-1])) or 1.0
         score = math.tanh((short_return * 10.0) + (float(trend) / baseline * 20.0))
         return round(score, 4)
