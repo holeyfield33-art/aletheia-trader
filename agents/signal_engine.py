@@ -285,7 +285,9 @@ class SignalEngine:
                 low = close * 0.999
 
             snap = self._snapshot(close, high, low, correlation_penalty)
-            prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+            prev_hist = (
+                float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+            )
             last_price = float(close.iloc[-1].item())
 
             valid, reason = self._validate_signal(snap, prev_hist, last_price)
@@ -323,7 +325,9 @@ class SignalEngine:
                 low = close * 0.999
 
             snap = self._snapshot(close, high, low, correlation_penalty)
-            prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+            prev_hist = (
+                float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+            )
             last_price = float(close.iloc[-1].item())
 
             valid, reason = self._validate_signal(snap, prev_hist, last_price)

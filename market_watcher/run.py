@@ -74,9 +74,7 @@ def build_config(args: argparse.Namespace) -> MarketWatcherConfig:
             or os.getenv("MARKET_WATCHER_STRATEGY_PRESET", "safe_trend_follower")
         ),
         eli5_mode=bool(
-            args.eli5_mode
-            if args.eli5_mode is not None
-            else file_cfg.get("eli5_mode", True)
+            args.eli5_mode if args.eli5_mode is not None else file_cfg.get("eli5_mode", True)
         ),
         risk_per_trade_percent=float(
             args.risk_per_trade_percent

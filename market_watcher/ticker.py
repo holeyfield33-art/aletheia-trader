@@ -47,7 +47,11 @@ class LiveTicker:
         pct_change = 0.0 if abs(base) <= 1e-12 else ((last / base) - 1.0) * 100.0
 
         latest_ts = frame.index[-1]
-        timestamp = latest_ts.isoformat() if hasattr(latest_ts, "isoformat") else datetime.now(UTC).isoformat()
+        timestamp = (
+            latest_ts.isoformat()
+            if hasattr(latest_ts, "isoformat")
+            else datetime.now(UTC).isoformat()
+        )
 
         return TickerSnapshot(
             symbol=symbol,
