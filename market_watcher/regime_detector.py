@@ -58,3 +58,15 @@ class RegimeDetector:
             return 0.0
         score = abs(float((returns.iloc[-1] - mean) / std))
         return round(score, 4)
+
+    @staticmethod
+    def plain_english_label(regime: str) -> str:
+        labels = {
+            "trending": "Strong Uptrend or Downtrend",
+            "ranging": "Choppy Market",
+            "high-vol": "High Volatility",
+            "breakout": "Breakout In Progress",
+            "mean-reversion": "Pullback / Mean Reversion Zone",
+            "unknown": "Market State Building",
+        }
+        return labels.get(regime, "Unclassified Market")

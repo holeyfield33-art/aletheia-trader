@@ -19,6 +19,7 @@ class WatcherSignalGenerator:
         frame: pd.DataFrame,
         regime: str,
         correlation_penalty: float,
+        strategy_profile: dict[str, Any] | None = None,
         multi_tf_frames: dict[str, pd.DataFrame] | None = None,
     ) -> dict[str, Any]:
         signal, meta, filter_reason = self.signal_engine.generate_forex_signal(
@@ -35,9 +36,23 @@ class WatcherSignalGenerator:
         elif signal not in {NO_SIGNAL, "HOLD"}:
             confidence = max(0.0, confidence - 10.0)
 
-        if signal not in {NO_SIGNAL, "HOLD"} and confidence < 60.0:
+        profile = strategy_profile or {}
+        min_confidence = float(profile.get("min_confidence", 60.0))
+        favored_regime = str(profile.get("favor_regime", "")).strip().lower()
+        require_mtf = bool(profile.get("mtf_required", False))
+
+        if favored_regime and regime != favored_regime and signal not in {NO_SIGNAL, "HOLD"}:
+            confidence = max(0.0, confidence - 8.0)
+
+        if require_mtf and signal not in {NO_SIGNAL, "HOLD"} and not mtf_confirmed:
             signal = NO_SIGNAL
-            filter_reason = f"Confidence too low after MTF confirmation ({confidence:.1f}/100)"
+            filter_reason = "Preset requires multi-timeframe confirmation"
+
+        if signal not in {NO_SIGNAL, "HOLD"} and confidence < min_confidence:
+            signal = NO_SIGNAL
+            filter_reason = (
+                f"Confidence too low for preset threshold ({confidence:.1f}/{min_confidence:.1f})"
+            )
 
         return {
             "signal": signal,

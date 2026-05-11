@@ -68,6 +68,26 @@ def build_config(args: argparse.Namespace) -> MarketWatcherConfig:
         symbols=list(symbols),
         timeframe=timeframe,
         lookback_period=lookback,
+        strategy_preset_id=str(
+            args.strategy_preset_id
+            or file_cfg.get("strategy_preset_id")
+            or os.getenv("MARKET_WATCHER_STRATEGY_PRESET", "safe_trend_follower")
+        ),
+        eli5_mode=bool(
+            args.eli5_mode
+            if args.eli5_mode is not None
+            else file_cfg.get("eli5_mode", True)
+        ),
+        risk_per_trade_percent=float(
+            args.risk_per_trade_percent
+            if args.risk_per_trade_percent is not None
+            else file_cfg.get("risk_per_trade_percent", 1.0)
+        ),
+        max_daily_loss_percent=float(
+            args.max_daily_loss_percent
+            if args.max_daily_loss_percent is not None
+            else file_cfg.get("max_daily_loss_percent", 3.0)
+        ),
         poll_interval_seconds=poll_seconds,
     )
 
@@ -78,6 +98,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", nargs="*", default=None)
     parser.add_argument("--timeframe", default=None)
     parser.add_argument("--lookback-period", default=None)
+    parser.add_argument("--strategy-preset-id", default=None)
+    parser.add_argument("--eli5-mode", action="store_true", default=None)
+    parser.add_argument("--risk-per-trade-percent", type=float, default=None)
+    parser.add_argument("--max-daily-loss-percent", type=float, default=None)
     parser.add_argument("--poll-interval-seconds", type=float, default=None)
     parser.add_argument("--run-once", action="store_true")
     parser.add_argument("--run-once-async", action="store_true")

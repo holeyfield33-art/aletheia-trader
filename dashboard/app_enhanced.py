@@ -229,186 +229,239 @@ def render_correlation_heatmap(corr_payload: dict[str, Any]) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-# Sidebar
+def fetch_strategy_presets() -> list[dict[str, Any]]:
+    fallback = [
+        {
+            "id": "safe_trend_follower",
+            "name": "Safe Trend Follower",
+            "description": "Rides clear trends with conservative entries.",
+            "risk_level": "Low",
+            "best_market_conditions": "Strong Uptrend or Strong Downtrend",
+            "default_parameters": {"min_confidence": 65.0},
+            "expected_behavior": "Fewer, cleaner trades.",
+        },
+        {
+            "id": "volatility_crusher",
+            "name": "Volatility Crusher",
+            "description": "Targets expansion moves with strict caps.",
+            "risk_level": "High",
+            "best_market_conditions": "High Volatility",
+            "default_parameters": {"min_confidence": 60.0},
+            "expected_behavior": "Fast entries during sharp moves.",
+        },
+        {
+            "id": "rsi_macd_confluence",
+            "name": "RSI + MACD Confluence",
+            "description": "Waits for momentum indicators to align.",
+            "risk_level": "Medium",
+            "best_market_conditions": "Orderly trends",
+            "default_parameters": {"min_confidence": 63.0},
+            "expected_behavior": "Balanced pace and confirmation.",
+        },
+        {
+            "id": "momentum_breakout",
+            "name": "Momentum Breakout",
+            "description": "Acts on directional breaks from consolidation.",
+            "risk_level": "High",
+            "best_market_conditions": "Breakout sessions",
+            "default_parameters": {"min_confidence": 62.0},
+            "expected_behavior": "Captures early breakout pressure.",
+        },
+        {
+            "id": "mean_reversion",
+            "name": "Mean Reversion",
+            "description": "Looks for stretched prices snapping back.",
+            "risk_level": "Medium",
+            "best_market_conditions": "Choppy Market",
+            "default_parameters": {"min_confidence": 58.0},
+            "expected_behavior": "Frequent range-trading opportunities.",
+        },
+    ]
+    try:
+        payload = requests.get(
+            f"{API_BASE}/v1/market-watcher/strategies", timeout=REQUEST_TIMEOUT_SECONDS
+        ).json()
+        strategies = payload.get("strategies")
+        if isinstance(strategies, list) and strategies:
+            return [item for item in strategies if isinstance(item, dict)]
+    except Exception:
+        pass
+    return fallback
+
+
+def symbols_for_asset(asset_class: str) -> list[str]:
+    if asset_class == "Forex":
+        return ["EUR/USD", "GBP/USD", "USD/JPY"]
+    if asset_class == "Nasdaq / Stocks":
+        return ["SPY", "QQQ", "AAPL", "NVDA"]
+    return ["BTC-USD", "ETH-USD", "SOL-USD"]
+
+
+def scan_seconds_from_label(label: str) -> int:
+    mapping = {
+        "15 seconds": 15,
+        "30 seconds": 30,
+        "1 minute": 60,
+        "5 minutes": 300,
+    }
+    return mapping.get(label, 60)
+
+
+def _agent_type_for_asset(asset_class: str) -> str:
+    return "forex" if asset_class == "Forex" else "options"
+
+
+api_ok, status = check_api()
+strategy_presets = fetch_strategy_presets()
+preset_by_name = {
+    str(item.get("name", "")): item for item in strategy_presets if item.get("name")
+}
+
+# Sidebar - Global Controls
 with st.sidebar:
-    st.markdown("### 🏢 Aletheia Trader")
-    st.divider()
-    protection = st.toggle("**🔐 Live Aletheia Protection**", value=True)
-    st.divider()
-    page = st.radio(
-        "**Navigate To:**",
-        [
-            "📊 Dashboard",
-            "🚀 Signal Generator",
-            "👁️ Live Market Watcher",
-            "🧪 Backtesting Lab",
-            "⏳ Pending Approvals",
-            "📈 Trade History",
-            "📉 Analytics",
-            "⚙️ Settings",
-        ],
-        label_visibility="collapsed",
+    st.title("🛡️ Aletheia Trader")
+    st.caption("Protected by Aletheia Core")
+
+    asset_class = st.selectbox(
+        "Market Mode",
+        options=["Forex", "Nasdaq / Stocks", "Crypto (Coinbase)"],
+        help="Choose which market class the dashboard should focus on.",
     )
+
+    strategy_names = list(preset_by_name.keys())
+    strategy_preset = st.selectbox(
+        "Trading Strategy",
+        options=strategy_names,
+        help="One-click strategy presets with beginner-friendly defaults.",
+    )
+    selected_preset = preset_by_name.get(strategy_preset, strategy_presets[0])
+    selected_preset_id = str(selected_preset.get("id", "safe_trend_follower"))
+
     st.divider()
-    api_ok, status = check_api()
+    risk_per_trade = st.slider(
+        "Risk per Trade (%)",
+        min_value=0.5,
+        max_value=5.0,
+        value=1.0,
+        step=0.1,
+        help="Maximum account risk per position.",
+    )
+    max_daily_loss = st.slider(
+        "Max Daily Loss (%)",
+        min_value=1.0,
+        max_value=10.0,
+        value=3.0,
+        step=0.5,
+        help="Trading pauses once this drawdown limit is reached.",
+    )
+
+    st.divider()
+    aletheia_enabled = st.toggle(
+        "Enable Aletheia Protection",
+        value=True,
+        help="When enabled, watcher decisions stay under Aletheia policy control.",
+    )
+    eli5_mode = st.toggle(
+        "Explain Like I'm 5",
+        value=True,
+        help="Adds plain-English signal explanations for beginners.",
+    )
+    scan_interval = st.select_slider(
+        "Scan Frequency",
+        options=["15 seconds", "30 seconds", "1 minute", "5 minutes"],
+        value="1 minute",
+        help="How often the live watcher panel refreshes and polls status.",
+    )
+
+    st.divider()
     if api_ok:
         st.success(f"✅ API {status}")
     else:
         st.error(f"❌ API {status}")
-    st.divider()
-    st.markdown("**Quick Links:**")
-    col1, col2 = st.columns(2)
-    col1.button("🔗 Aletheia Core", use_container_width=True)
-    col2.button("🔗 Redteam Kit", use_container_width=True)
-    st.divider()
-    st.caption("Aletheia Trader v1.0.1")
+    st.caption(f"Current Mode: **{asset_class}** • **{strategy_preset}**")
 
-if not api_ok and page not in {"⚙️ Settings", "🧪 Backtesting Lab"}:
-    st.error("🔴 API Unavailable")
-    st.code("uvicorn api.server:app --host 0.0.0.0 --port 8000", language="bash")
-    st.stop()
-
-# Pages
-if page == "📊 Dashboard":
-    render_header()
-    st_autorefresh(interval=60000, key="dashboard")
-    if protection:
-        render_protection_banner()
-
-    st.markdown("### 📊 Key Metrics")
-    col1, col2, col3, col4 = st.columns(4)
-
+if api_ok and st.session_state.get("mw_selected_preset") != selected_preset_id:
     try:
-        pnl = requests.get(f"{API_BASE}/v1/analytics/pnl", timeout=REQUEST_TIMEOUT_SECONDS).json()
-        orders = requests.get(f"{API_BASE}/v1/orders", timeout=REQUEST_TIMEOUT_SECONDS).json()
-        signals = requests.get(
-            f"{API_BASE}/v1/signals/pending", timeout=REQUEST_TIMEOUT_SECONDS
-        ).json()
+        requests.post(
+            f"{API_BASE}/v1/market-watcher/strategies/select",
+            params={"preset_id": selected_preset_id},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        pass
+    st.session_state["mw_selected_preset"] = selected_preset_id
 
-        with col1:
-            render_metric_card("Daily P&L", f"${pnl['daily']['daily_pnl']:,.2f}", None, "📈")
-        with col2:
-            render_metric_card("Total P&L", f"${pnl['total_pnl']:,.2f}", None, "💰")
-        with col3:
-            render_metric_card("Win Rate", "75%", None, "🎯")
-        with col4:
-            render_metric_card("Pending", str(len(signals.get("signals", []))), None, "⏳")
-    except Exception as e:
-        st.error(f"Error: {str(e)[:60]}")
+scan_seconds = scan_seconds_from_label(scan_interval)
+asset_symbols = symbols_for_asset(asset_class)
 
-    st.markdown("---\n### ⏳ Pending Signals")
-    try:
-        sig_data = requests.get(
-            f"{API_BASE}/v1/signals/pending", timeout=REQUEST_TIMEOUT_SECONDS
-        ).json()
-        signals = sig_data.get("signals", [])
-        if signals:
-            for sig in signals[:5]:
-                with st.container(border=True):
-                    col_left, col_right = st.columns([2, 1])
-                    with col_left:
-                        st.markdown(
-                            f"**{sig.get('agent_type', 'UNKNOWN').upper()} • {sig.get('instrument', 'N/A')}**"
-                        )
-                        st.metric("Signal", sig.get("signal", "HOLD"))
-                    with col_right:
-                        entry = st.number_input("Entry$", value=100.0, key=f"e_{sig['signal_id']}")
-                        if st.button(
-                            "✅ Approve", key=f"a_{sig['signal_id']}", use_container_width=True
-                        ):
-                            resp = requests.post(
-                                f"{API_BASE}/v1/signals/approve",
-                                json={
-                                    "signal_id": sig["signal_id"],
-                                    "entry_price": entry,
-                                    "qty": 1.0,
-                                },
-                                timeout=REQUEST_TIMEOUT_SECONDS,
-                            )
-                            if resp.status_code == 200:
-                                st.balloons()
-                                st.success("✅ Approved!")
-                                st.rerun()
-        else:
-            st.info("✓ No pending signals")
-    except Exception as e:
-        st.error(f"Error: {str(e)[:60]}")
-
-elif page == "🚀 Signal Generator":
-    render_header()
-    st.markdown("### 🚀 Generate Signals")
+render_header()
+if aletheia_enabled:
     render_protection_banner()
-    col1, col2 = st.columns(2)
-    with col1:
-        agent = st.selectbox("Agent", ["forex", "options"])
-    with col2:
-        instr = st.selectbox("Symbol", ["EUR/USD", "GBP/USD", "SPY", "QQQ"])
-    if st.button("🚀 Generate", type="primary", use_container_width=True):
-        with st.spinner("Generating..."):
-            try:
-                resp = requests.post(
-                    f"{API_BASE}/v1/signals/generate",
-                    json={"agent_type": agent, "pair_or_symbol": instr},
-                    timeout=REQUEST_TIMEOUT_SECONDS,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("filtered"):
-                        render_filtered_signal(data)
-                        render_signal_quality(data)
-                    else:
-                        st.balloons()
-                        st.success(
-                            f"✅ Valid Signal: **{data['signal']}** — ID: {data['signal_id']}"
-                        )
-                        st.caption("Validation status: Passed strict filters")
-                        render_signal_quality(data)
-                        st.json(data.get("indicators", {}))
-                else:
-                    st.error(f"API error {resp.status_code}: {resp.text[:120]}")
-            except Exception as e:
-                st.error(f"Error: {str(e)[:60]}")
+else:
+    st.warning("Aletheia protection is disabled in UI controls. Decisions may be less protected.")
 
-elif page == "👁️ Live Market Watcher":
-    render_header()
-    st.markdown("### 👁️ Live Market Watcher")
-    st.caption(
-        "Background market diagnostics orchestrator with Aletheia-protected signal publication."
+if not api_ok:
+    st.warning(
+        "API is offline. Live watcher, signal generation, and approvals are unavailable until API recovers."
     )
+    st.code("uvicorn api.server:app --host 0.0.0.0 --port 8000", language="bash")
 
-    control_col1, control_col2, control_col3, control_col4 = st.columns([1.5, 1.5, 2, 2])
-    symbols_text = control_col1.text_input("Symbols", value="EUR/USD,SPY,BTC-USD")
-    timeframe_choice = control_col2.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
-    poll_seconds = control_col3.number_input("Poll (seconds)", min_value=5.0, value=60.0, step=5.0)
-    lookback = control_col4.text_input("Lookback", value="30d")
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "📡 Live Market Watcher",
+        "⚡ Signals",
+        "✅ Approvals",
+        "📊 Backtest",
+        "⚙️ Settings",
+    ]
+)
+
+with tab1:
+    st.subheader(f"Live {asset_class} Market Watcher")
+    st.info(f"Using **{strategy_preset}** strategy | Scanning every {scan_interval}")
+    st_autorefresh(interval=scan_seconds * 1000, key="live-watcher-refresh")
+
+    symbols_text = st.text_input(
+        "Symbols",
+        value=",".join(asset_symbols),
+        help="Comma-separated list of symbols for the active market mode.",
+    )
+    c1, c2, c3 = st.columns(3)
+    timeframe_choice = c1.selectbox("Timeframe", ["1m", "5m", "15m", "1h", "4h", "1d"], index=3)
+    lookback = c2.text_input("Lookback", value="30d", help="Historical range used for analysis")
+    poll_seconds = c3.number_input("Poll seconds", min_value=5.0, value=float(scan_seconds), step=5.0)
 
     start_payload = {
         "symbols": [s.strip().upper() for s in symbols_text.split(",") if s.strip()],
         "timeframe": timeframe_choice,
         "poll_interval_seconds": float(poll_seconds),
         "lookback_period": lookback,
+        "strategy_preset_id": selected_preset_id,
+        "eli5_mode": eli5_mode,
+        "risk_per_trade_percent": float(risk_per_trade),
+        "max_daily_loss_percent": float(max_daily_loss),
     }
 
     action_col1, action_col2, action_col3 = st.columns(3)
-    if action_col1.button("▶ Start Watcher", type="primary", use_container_width=True):
+    if action_col1.button("▶ Start Watcher", type="primary", use_container_width=True, disabled=not api_ok):
         try:
             requests.post(
                 f"{API_BASE}/v1/market-watcher/start",
                 json=start_payload,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
-            st.success("MarketWatcher started")
+            st.success("Market watcher started with selected preset and risk profile.")
         except Exception as e:
             st.error(f"Failed to start watcher: {str(e)[:80]}")
 
-    if action_col2.button("⏹ Stop Watcher", use_container_width=True):
+    if action_col2.button("⏹ Stop Watcher", use_container_width=True, disabled=not api_ok):
         try:
             requests.post(f"{API_BASE}/v1/market-watcher/stop", timeout=REQUEST_TIMEOUT_SECONDS)
-            st.success("MarketWatcher stopped")
+            st.success("Market watcher stopped")
         except Exception as e:
             st.error(f"Failed to stop watcher: {str(e)[:80]}")
 
-    if action_col3.button("⚡ Run One Cycle", use_container_width=True):
+    if action_col3.button("⚡ Run One Cycle", use_container_width=True, disabled=not api_ok):
         try:
             requests.post(
                 f"{API_BASE}/v1/market-watcher/run-once",
@@ -419,110 +472,288 @@ elif page == "👁️ Live Market Watcher":
         except Exception as e:
             st.error(f"Run-once failed: {str(e)[:80]}")
 
-    try:
-        status_payload = requests.get(
-            f"{API_BASE}/v1/market-watcher/status", timeout=REQUEST_TIMEOUT_SECONDS
-        ).json()
-        watcher_status = status_payload if isinstance(status_payload, dict) else {}
-        snapshot = watcher_status.get("latest_snapshot") or {}
-        snapshot_data = snapshot if isinstance(snapshot, dict) else {}
-        watched_rows = (
-            snapshot_data.get("symbols") if isinstance(snapshot_data.get("symbols"), list) else []
-        )
+    if api_ok:
+        try:
+            status_payload = requests.get(
+                f"{API_BASE}/v1/market-watcher/status", timeout=REQUEST_TIMEOUT_SECONDS
+            ).json()
+            watcher_status = status_payload if isinstance(status_payload, dict) else {}
+            snapshot = watcher_status.get("latest_snapshot") or {}
+            snapshot_data = snapshot if isinstance(snapshot, dict) else {}
+            watched_rows = (
+                snapshot_data.get("symbols")
+                if isinstance(snapshot_data.get("symbols"), list)
+                else []
+            )
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("State", "RUNNING" if watcher_status.get("running") else "STOPPED")
-        k2.metric("Cycles", str(watcher_status.get("cycle_count", 0)))
-        k3.metric(
-            "Heartbeat Lag (s)",
-            f"{_as_float(watcher_status.get('seconds_since_heartbeat')):.1f}",
-        )
-        k4.metric("Last Error", str(watcher_status.get("last_error") or "none")[:18])
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("State", "RUNNING" if watcher_status.get("running") else "STOPPED")
+            k2.metric("Cycles", str(watcher_status.get("cycle_count", 0)))
+            k3.metric(
+                "Heartbeat Lag (s)",
+                f"{_as_float(watcher_status.get('seconds_since_heartbeat')):.1f}",
+            )
+            k4.metric("Last Error", str(watcher_status.get("last_error") or "none")[:18])
 
-        st.markdown("### Symbol Diagnostics")
-        if watched_rows:
-            symbol_df = pd.DataFrame(watched_rows)
-            display_cols = [
-                "symbol",
-                "signal",
-                "confidence",
-                "volatility_regime",
-                "sentiment_label",
-                "sentiment_source",
-                "anomaly_score",
-                "correlation_penalty",
-                "source_backend",
-            ]
-            visible_cols = [c for c in display_cols if c in symbol_df.columns]
-            st.dataframe(symbol_df[visible_cols], use_container_width=True, hide_index=True)
-        else:
-            st.info("No MarketWatcher snapshots yet. Start the watcher or run one cycle.")
+            st.markdown("### Ticker + Regime Diagnostics")
+            if watched_rows:
+                symbol_df = pd.DataFrame(watched_rows)
+                display_cols = [
+                    "symbol",
+                    "last_price",
+                    "percent_change",
+                    "session_high",
+                    "session_low",
+                    "signal",
+                    "confidence",
+                    "regime_label",
+                    "sentiment_label",
+                    "source_backend",
+                ]
+                visible_cols = [c for c in display_cols if c in symbol_df.columns]
+                st.dataframe(symbol_df[visible_cols], use_container_width=True, hide_index=True)
 
-        st.markdown("### Correlation Map")
-        corr = snapshot_data.get("correlation_matrix")
-        render_correlation_heatmap(corr if isinstance(corr, dict) else {})
+                eli5_rows = [
+                    {
+                        "symbol": row.get("symbol"),
+                        "explanation": row.get("eli5", "No explanation available."),
+                    }
+                    for row in watched_rows
+                    if isinstance(row, dict)
+                ]
+                if eli5_mode and eli5_rows:
+                    with st.expander("🧠 Plain English Explanations", expanded=False):
+                        st.dataframe(pd.DataFrame(eli5_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("No snapshots yet. Start the watcher or run one cycle.")
 
-        history_payload_raw = requests.get(
-            f"{API_BASE}/v1/market-watcher/history?limit=60", timeout=REQUEST_TIMEOUT_SECONDS
-        ).json()
-        history_payload = history_payload_raw if isinstance(history_payload_raw, dict) else {}
-        history = (
-            history_payload.get("history")
-            if isinstance(history_payload.get("history"), list)
-            else []
-        )
-        if history:
-            points: list[dict[str, Any]] = []
-            for row in history:
-                if not isinstance(row, dict):
+            st.markdown("### Live Candlestick Tracker")
+            history_payload = requests.get(
+                f"{API_BASE}/v1/market-watcher/history?limit=180", timeout=REQUEST_TIMEOUT_SECONDS
+            ).json()
+            history = history_payload.get("history", []) if isinstance(history_payload, dict) else []
+
+            candle_rows: list[dict[str, Any]] = []
+            for cycle in history:
+                if not isinstance(cycle, dict):
                     continue
-                ts = row.get("timestamp")
-                sym_rows = row.get("symbols") or []
-                avg_anomaly = 0.0
-                if sym_rows:
-                    avg_anomaly = sum(_as_float(s.get("anomaly_score")) for s in sym_rows) / len(
-                        sym_rows
+                cycle_ts = cycle.get("timestamp")
+                symbols = cycle.get("symbols", [])
+                if not isinstance(symbols, list):
+                    continue
+                for symbol_row in symbols:
+                    if not isinstance(symbol_row, dict):
+                        continue
+                    candle = symbol_row.get("candlestick")
+                    if not isinstance(candle, dict):
+                        continue
+                    candle_rows.append(
+                        {
+                            "symbol": symbol_row.get("symbol"),
+                            "timestamp": candle.get("timestamp") or cycle_ts,
+                            "open": _as_float(candle.get("open")),
+                            "high": _as_float(candle.get("high")),
+                            "low": _as_float(candle.get("low")),
+                            "close": _as_float(candle.get("close")),
+                            "patterns": ", ".join(candle.get("patterns", [])),
+                        }
                     )
-                points.append({"timestamp": ts, "avg_anomaly": avg_anomaly})
-            trend_df = pd.DataFrame(points)
-            trend_df["timestamp"] = pd.to_datetime(trend_df["timestamp"], errors="coerce")
-            trend_df = trend_df.dropna()
-            if not trend_df.empty:
-                fig = go.Figure()
-                fig.add_trace(
-                    go.Scatter(
-                        x=trend_df["timestamp"],
-                        y=trend_df["avg_anomaly"],
-                        mode="lines+markers",
-                        name="Avg anomaly",
-                        line={"color": COLORS["warning"], "width": 2},
-                    )
+
+            if candle_rows:
+                candle_df = pd.DataFrame(candle_rows)
+                candle_symbols = sorted(candle_df["symbol"].dropna().unique().tolist())
+                chosen_symbol = st.selectbox("Chart Symbol", options=candle_symbols)
+                symbol_candles = candle_df[candle_df["symbol"] == chosen_symbol].copy()
+                symbol_candles["timestamp"] = pd.to_datetime(symbol_candles["timestamp"], errors="coerce")
+                symbol_candles = symbol_candles.dropna().sort_values("timestamp").tail(120)
+
+                fig = go.Figure(
+                    data=[
+                        go.Candlestick(
+                            x=symbol_candles["timestamp"],
+                            open=symbol_candles["open"],
+                            high=symbol_candles["high"],
+                            low=symbol_candles["low"],
+                            close=symbol_candles["close"],
+                            name=chosen_symbol,
+                        )
+                    ]
                 )
                 fig.update_layout(
-                    title="Anomaly Pulse (Last 60 Cycles)",
+                    title=f"{chosen_symbol} Candlestick Stream",
                     template="plotly_dark",
-                    height=320,
+                    height=420,
+                    xaxis_rangeslider_visible=False,
                 )
                 st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"MarketWatcher panel error: {str(e)[:80]}")
 
-elif page == "🧪 Backtesting Lab":
-    render_header()
-    st.markdown("### 🧪 Backtesting Lab")
-    st.caption(
-        "Vectorized strategy research with risk snapshot, optimization, and walk-forward analysis."
+                latest_patterns = symbol_candles["patterns"].iloc[-1] if not symbol_candles.empty else ""
+                if latest_patterns:
+                    st.caption(f"Latest pattern cues: {latest_patterns}")
+            else:
+                st.info("Candlestick history will appear after watcher cycles complete.")
+
+            st.markdown("### Correlation Map")
+            corr = snapshot_data.get("correlation_matrix")
+            render_correlation_heatmap(corr if isinstance(corr, dict) else {})
+        except Exception as e:
+            st.error(f"Live watcher panel error: {str(e)[:90]}")
+
+with tab2:
+    st.subheader("Latest Signals")
+    st.caption("Signals are generated based on your selected market mode and strategy preset.")
+    signal_symbol = st.selectbox(
+        "Signal Symbol",
+        options=asset_symbols,
+        help="Pick one symbol and generate a fresh signal using current sidebar settings.",
     )
+
+    if st.button("Generate Signal", type="primary", disabled=not api_ok):
+        with st.spinner("Generating signal..."):
+            try:
+                if asset_class == "Crypto (Coinbase)":
+                    resp = requests.get(
+                        f"{API_BASE}/v1/signals/crypto",
+                        params={"symbol": signal_symbol},
+                        timeout=REQUEST_TIMEOUT_SECONDS,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        st.success(f"Signal generated for {signal_symbol}")
+                        st.json(data)
+                    else:
+                        st.error(f"API error {resp.status_code}: {resp.text[:120]}")
+                else:
+                    resp = requests.post(
+                        f"{API_BASE}/v1/signals/generate",
+                        json={
+                            "agent_type": _agent_type_for_asset(asset_class),
+                            "pair_or_symbol": signal_symbol,
+                        },
+                        timeout=REQUEST_TIMEOUT_SECONDS,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("filtered"):
+                            render_filtered_signal(data)
+                            render_signal_quality(data)
+                        else:
+                            st.success(f"✅ Signal: {data.get('signal', 'N/A')} for {signal_symbol}")
+                            render_signal_quality(data)
+                            render_receipt(str(data.get("receipt", "")))
+                            st.json(data.get("indicators", {}))
+                    else:
+                        st.error(f"API error {resp.status_code}: {resp.text[:120]}")
+            except Exception as e:
+                st.error(f"Signal generation error: {str(e)[:80]}")
+
+    st.markdown("### Pending Signal Queue")
+    if api_ok:
+        try:
+            pending_payload = requests.get(
+                f"{API_BASE}/v1/signals/pending", timeout=REQUEST_TIMEOUT_SECONDS
+            ).json()
+            pending = pending_payload.get("signals", []) if isinstance(pending_payload, dict) else []
+            if pending:
+                pending_df = pd.DataFrame(pending)
+                if "instrument" in pending_df.columns:
+                    pending_df = pending_df[pending_df["instrument"].isin(asset_symbols)]
+                st.dataframe(pending_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No pending signals right now.")
+        except Exception as e:
+            st.error(f"Pending signal panel error: {str(e)[:80]}")
+
+with tab3:
+    st.subheader("Approvals")
+    st.caption("Human review step before execution. Aletheia receipts remain visible for traceability.")
+    if api_ok:
+        try:
+            signals = (
+                requests.get(f"{API_BASE}/v1/signals/pending", timeout=REQUEST_TIMEOUT_SECONDS)
+                .json()
+                .get("signals", [])
+            )
+            signals = [s for s in signals if str(s.get("instrument", "")) in asset_symbols]
+            if signals:
+                for i, sig in enumerate(signals):
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**#{i + 1}: {sig.get('agent_type', 'N/A').upper()} • {sig.get('instrument', 'N/A')}**"
+                        )
+                        c1, c2, c3 = st.columns([1, 1, 1])
+                        entry_price = c1.number_input(
+                            "Entry Price",
+                            min_value=0.0001,
+                            value=100.0,
+                            key=f"appr_entry_{sig.get('signal_id', i)}",
+                        )
+                        qty = c2.number_input(
+                            "Quantity",
+                            min_value=0.01,
+                            value=1.0,
+                            step=0.01,
+                            key=f"appr_qty_{sig.get('signal_id', i)}",
+                        )
+                        approve_clicked = c3.button(
+                            "Approve",
+                            key=f"approve_{sig.get('signal_id', i)}",
+                            type="primary",
+                            use_container_width=True,
+                        )
+                        reject_clicked = c3.button(
+                            "Reject",
+                            key=f"reject_{sig.get('signal_id', i)}",
+                            use_container_width=True,
+                        )
+
+                        if approve_clicked:
+                            resp = requests.post(
+                                f"{API_BASE}/v1/signals/approve",
+                                json={
+                                    "signal_id": sig.get("signal_id"),
+                                    "entry_price": entry_price,
+                                    "qty": qty,
+                                },
+                                timeout=REQUEST_TIMEOUT_SECONDS,
+                            )
+                            if resp.status_code == 200:
+                                st.success("Signal approved and converted to order.")
+                                st.rerun()
+                            else:
+                                st.error(f"Approve failed: {resp.text[:120]}")
+
+                        if reject_clicked:
+                            resp = requests.post(
+                                f"{API_BASE}/v1/signals/reject",
+                                json={"signal_id": sig.get("signal_id")},
+                                timeout=REQUEST_TIMEOUT_SECONDS,
+                            )
+                            if resp.status_code == 200:
+                                st.warning("Signal rejected.")
+                                st.rerun()
+                            else:
+                                st.error(f"Reject failed: {resp.text[:120]}")
+
+                        render_receipt(str(sig.get("receipt", "")))
+            else:
+                st.success("No pending approvals in this market mode.")
+        except Exception as e:
+            st.error(f"Approvals panel error: {str(e)[:90]}")
+
+with tab4:
+    st.subheader("Backtest")
+    st.caption("One-click backtesting aligned to your selected strategy preset and risk profile.")
 
     with st.container(border=True):
         c1, c2, c3 = st.columns(3)
         with c1:
-            symbol_text = st.text_input("Symbols (comma-separated)", value="EURUSD,BTC-USD,SPY")
-            strategy_name = st.selectbox("Strategy", ["macd_rsi"])
+            symbol_text = st.text_input("Symbols", value=",".join(asset_symbols))
+            strategy_name = st.selectbox("Engine Strategy", ["macd_rsi"], help="Execution engine")
             timeframe = st.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=1)
         with c2:
-            raw_start = st.date_input("Start", value=datetime(2023, 1, 1))
-            raw_end = st.date_input("End", value=datetime(2025, 1, 1))
+            raw_start = st.date_input("Start", value=datetime(2023, 1, 1), key="bt_start")
+            raw_end = st.date_input("End", value=datetime(2025, 1, 1), key="bt_end")
             start_date = normalize_date_input(raw_start)
             end_date = normalize_date_input(raw_end)
             initial_cash = st.number_input(
@@ -532,15 +763,9 @@ elif page == "🧪 Backtesting Lab":
             commission_bps = st.number_input("Commission (bps)", min_value=0.0, value=2.0, step=0.1)
             slippage_bps = st.number_input("Slippage (bps)", min_value=0.0, value=1.0, step=0.1)
             spread_bps = st.number_input("Spread (bps)", min_value=0.0, value=1.5, step=0.1)
-            risk_per_trade = st.number_input(
-                "Risk / Trade", min_value=0.001, max_value=0.05, value=0.01, step=0.001
-            )
+            risk_per_trade_decimal = float(risk_per_trade) / 100.0
 
-    opt_col, wf_col, run_col = st.columns([1, 1, 2])
-    run_opt = opt_col.checkbox("Run Optimization", value=True)
-    run_wf = wf_col.checkbox("Run Walk-Forward", value=True)
-
-    if run_col.button("▶ Run Backtest", type="primary", use_container_width=True):
+    if st.button("▶ Run Backtest", type="primary", use_container_width=True):
         symbols = [s.strip() for s in symbol_text.split(",") if s.strip()]
         cfg = BacktestConfig(
             symbols=symbols,
@@ -548,170 +773,93 @@ elif page == "🧪 Backtesting Lab":
             start=start_date.isoformat(),
             end=end_date.isoformat(),
             strategy=strategy_name,
-            strategy_params={"risk_per_trade": risk_per_trade},
+            strategy_params={
+                "risk_per_trade": risk_per_trade_decimal,
+                "strategy_preset_id": selected_preset_id,
+            },
             initial_cash=initial_cash,
             commission_bps=commission_bps,
             slippage_bps=slippage_bps,
             spread_bps=spread_bps,
-            risk_per_trade=risk_per_trade,
+            risk_per_trade=risk_per_trade_decimal,
         )
 
-        with st.spinner("Running vectorized backtest..."):
+        with st.spinner("Running backtest..."):
             engine = BacktestEngine()
             report = engine.run(cfg)
-            payload: dict[str, Any] = {"engine": engine, "report": report, "config": cfg}
-
-            if run_opt and symbols:
-                payload["optimization"] = engine.optimize(
-                    cfg,
-                    symbol=symbols[0],
-                    param_grid={
-                        "rsi_buy": [30, 35, 40],
-                        "rsi_sell": [60, 65, 70],
-                        "trend_threshold": [0.0, 0.002, 0.004],
-                    },
-                )
-
-            if run_wf and symbols:
-                payload["walk_forward"] = engine.walk_forward(
-                    cfg,
-                    symbol=symbols[0],
-                    param_grid={
-                        "rsi_buy": [30, 35],
-                        "rsi_sell": [65, 70],
-                    },
-                    train_bars=300,
-                    test_bars=120,
-                    step_bars=120,
-                )
-
-            st.session_state["bt_payload"] = payload
+            st.session_state["bt_payload"] = {"engine": engine, "report": report, "config": cfg}
 
     bt_payload = cast(dict[str, Any] | None, st.session_state.get("bt_payload"))
     if isinstance(bt_payload, dict):
         page_engine = cast(BacktestEngine, bt_payload["engine"])
         report = cast(Any, bt_payload["report"])
-
-        st.markdown("---\n### 📌 Portfolio Summary")
         p = report.portfolio_metrics
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Sharpe", f"{p.get('sharpe', 0.0):.2f}")
-        c2.metric("Sortino", f"{p.get('sortino', 0.0):.2f}")
-        c3.metric("Calmar", f"{p.get('calmar', 0.0):.2f}")
-        c4.metric("Max DD", f"{p.get('max_drawdown', 0.0) * 100:.2f}%")
 
-        risk = cast(dict[str, Any], report.risk_snapshot)
-        st.markdown("### 🛡️ Risk Snapshot")
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("VaR", f"{_as_float(risk.get('var', 0.0)) * 100:.2f}%")
-        r2.metric("CVaR", f"{_as_float(risk.get('cvar', 0.0)) * 100:.2f}%")
-        r3.metric("Open Notional", f"{_as_float(risk.get('open_notional_pct', 0.0)) * 100:.2f}%")
-        limits = risk.get("limits", {}) if isinstance(risk, dict) else {}
-        r4.metric("Risk Gate", "OPEN" if limits.get("allow_new_risk", True) else "HALTED")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Sharpe", f"{p.get('sharpe', 0.0):.2f}")
+        m2.metric("Sortino", f"{p.get('sortino', 0.0):.2f}")
+        m3.metric("Calmar", f"{p.get('calmar', 0.0):.2f}")
+        m4.metric("Max DD", f"{p.get('max_drawdown', 0.0) * 100:.2f}%")
 
         symbols_available = list(report.results.keys())
-        if not symbols_available:
-            st.warning("No symbols produced backtest results. Check symbol inputs and date range.")
-        else:
+        if symbols_available:
             selected = st.selectbox("Inspect Symbol", symbols_available)
             result = report.results[selected]
-
-            left, right = st.columns(2)
-            left.plotly_chart(
-                page_engine.build_equity_curve_figure(result), use_container_width=True
-            )
-            right.plotly_chart(page_engine.build_drawdown_figure(result), use_container_width=True)
-
+            lcol, rcol = st.columns(2)
+            lcol.plotly_chart(page_engine.build_equity_curve_figure(result), use_container_width=True)
+            rcol.plotly_chart(page_engine.build_drawdown_figure(result), use_container_width=True)
             render_monthly_heatmap(result.monthly_returns_heatmap, selected)
-
-            st.markdown("### 📄 Performance Tear Sheet")
-            tear_rows = {
-                **result.metrics,
-                **{f"mc_{k}": v for k, v in result.monte_carlo.items()},
-                "risk_var": _as_float(risk.get("var", 0.0)),
-                "risk_cvar": _as_float(risk.get("cvar", 0.0)),
-            }
-            tear_df = pd.DataFrame([{"metric": k, "value": v} for k, v in tear_rows.items()])
-            st.dataframe(tear_df, use_container_width=True, hide_index=True)
-
-            st.markdown("### 📚 Trade Log")
-            st.dataframe(result.trades.tail(200), use_container_width=True)
-
-        if "optimization" in bt_payload and isinstance(bt_payload["optimization"], pd.DataFrame):
-            st.markdown("### 🧬 Parameter Optimization")
-            st.dataframe(bt_payload["optimization"].head(20), use_container_width=True)
-
-        if "walk_forward" in bt_payload and isinstance(bt_payload["walk_forward"], dict):
-            st.markdown("### 🔁 Walk-Forward")
-            wf = bt_payload["walk_forward"]
-            st.json(wf.get("summary", {}))
-            windows = wf.get("windows", [])
-            if windows:
-                st.dataframe(pd.DataFrame(windows), use_container_width=True)
-
-elif page == "⏳ Pending Approvals":
-    render_header()
-    st.markdown("### ⏳ Pending Approvals")
-    try:
-        signals = (
-            requests.get(f"{API_BASE}/v1/signals/pending", timeout=REQUEST_TIMEOUT_SECONDS)
-            .json()
-            .get("signals", [])
-        )
-        if signals:
-            for i, sig in enumerate(signals):
-                with st.container(border=True):
-                    approval_cols = st.columns([2, 1, 1])
-                    approval_cols[0].markdown(
-                        f"**#{i+1}: {sig.get('agent_type', 'N/A').upper()} • {sig.get('instrument', 'N/A')}**"
-                    )
-                    approval_cols[1].metric("Signal", sig.get("signal", "HOLD"))
-                    approval_cols[2].metric("Expires", f"{sig.get('expires_in_minutes', 0)}m")
         else:
-            st.success("✅ All signals reviewed!")
-    except Exception as e:
-        st.error(f"Error: {str(e)[:60]}")
+            st.info("No backtest result rows yet.")
 
-elif page == "📈 Trade History":
-    render_header()
-    st.markdown("### 📈 Trade History")
-    status = st.selectbox("Status", ["All", "OPEN", "CLOSED"])
-    try:
-        url = (
-            f"{API_BASE}/v1/orders" if status == "All" else f"{API_BASE}/v1/orders?status={status}"
+with tab5:
+    st.subheader("Settings / Options")
+    st.caption("Advanced controls, strategy details, and integrations.")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Strategy Parameters**")
+        st.write(f"Preset: **{selected_preset.get('name', 'Unknown')}**")
+        st.write(
+            f"Best Conditions: {selected_preset.get('best_market_conditions', 'Market dependent')}"
         )
-        orders = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS).json().get("orders", [])
-        if orders:
-            st.dataframe(pd.DataFrame(orders), use_container_width=True)
-        else:
-            st.info(f"No {status.lower()} orders")
-    except Exception as e:
-        st.error(f"Error: {str(e)[:60]}")
+        st.write(f"Risk Level: {selected_preset.get('risk_level', 'Unknown')}")
+        st.caption(str(selected_preset.get("description", "")))
+        defaults = selected_preset.get("default_parameters", {})
+        if isinstance(defaults, dict) and defaults:
+            st.json(defaults)
+        st.info(str(selected_preset.get("expected_behavior", "No behavior notes.")))
 
-elif page == "📉 Analytics":
-    render_header()
-    st.markdown("### 📉 Analytics")
-    try:
-        pnl = requests.get(f"{API_BASE}/v1/analytics/pnl", timeout=REQUEST_TIMEOUT_SECONDS).json()
-        col1, col2 = st.columns(2)
-        col1.metric("Daily P&L", f"${pnl['daily']['daily_pnl']:,.2f}")
-        col2.metric("Total P&L", f"${pnl['total_pnl']:,.2f}")
-        st.info("📊 Full analytics charts coming soon with Plotly integration")
-    except Exception as e:
-        st.error(f"Error: {str(e)[:60]}")
+    with col2:
+        st.markdown("**Connections**")
+        st.caption("Quick checks for data and venue connectivity.")
+        if st.button("Test Coinbase Connection", type="primary", disabled=not api_ok):
+            try:
+                resp = requests.get(
+                    f"{API_BASE}/v1/signals/crypto",
+                    params={"symbol": "BTC-USD"},
+                    timeout=REQUEST_TIMEOUT_SECONDS,
+                )
+                if resp.status_code == 200:
+                    st.success("Coinbase-style crypto signal route is reachable.")
+                else:
+                    st.error(f"Connection test failed ({resp.status_code})")
+            except Exception as e:
+                st.error(f"Connection test error: {str(e)[:80]}")
 
-elif page == "⚙️ Settings":
-    render_header()
-    st.markdown("### ⚙️ Settings")
-    st.caption(f"API: {API_BASE}")
-    if st.button("🔍 Test API"):
-        try:
-            resp = requests.get(f"{API_BASE}/health", timeout=REQUEST_TIMEOUT_SECONDS)
-            st.success(f"✅ API Healthy: {resp.json()}")
-        except Exception as e:
-            st.error(f"❌ {str(e)[:60]}")
-    st.divider()
-    st.markdown(
-        "**Links:**\n- [Aletheia Core](https://aletheia-core.com)\n- [Redteam Kit](https://github.com/holeyfield33-art/aletheia-redteam-kit)\n- [Website](https://aletheia-core.com)"
-    )
-    st.caption("Aletheia Trader v1.0.1 • Protected by Aletheia Core")
+        if st.button("Test API Health"):
+            ok, state = check_api()
+            if ok:
+                st.success(f"API healthy: {state}")
+            else:
+                st.error(f"API unhealthy: {state}")
+
+        st.divider()
+        st.markdown(
+            "**Operational Profile**\n"
+            f"- Aletheia Protection: {'Enabled' if aletheia_enabled else 'Disabled'}\n"
+            f"- ELI5 Mode: {'Enabled' if eli5_mode else 'Disabled'}\n"
+            f"- Scan Frequency: {scan_interval}\n"
+            f"- Risk Per Trade: {risk_per_trade:.1f}%\n"
+            f"- Max Daily Loss: {max_daily_loss:.1f}%"
+        )
