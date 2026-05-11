@@ -12,15 +12,7 @@ from typing import Any, Literal
 
 import pandas as pd
 from dotenv import load_dotenv
-from fastapi import (
-    Depends,
-    FastAPI,
-    Header,
-    HTTPException,
-    Query,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from agents.crypto_agent import CryptoAgent
