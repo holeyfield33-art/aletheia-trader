@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 
+import pandas as pd
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -19,7 +20,10 @@ from agents.forex_agent import ForexAgent
 from agents.market_watcher import MarketWatcher
 from agents.options_agent import OptionsAgent
 from agents.signal_engine import NO_SIGNAL
+from brokers.order_executor import OrderExecutor
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
+from risk.breach_tracker import BreachTracker
+from risk.manager import PortfolioRiskState, RiskConfig, RiskManager
 
 load_dotenv()
 
@@ -28,6 +32,9 @@ ledger = SignalAndOrderLedger()
 forex_agent = ForexAgent()
 options_agent = OptionsAgent()
 market_watcher = MarketWatcher(ledger=ledger)
+order_executor = OrderExecutor()
+risk_manager = RiskManager(RiskConfig())
+breach_tracker = BreachTracker()
 
 
 class OrderStatus(str, Enum):
@@ -310,6 +317,105 @@ async def get_pnl():
             "timestamp": datetime.now(UTC).isoformat(),
         }
     )
+
+
+@app.get("/v1/orders/{order_id}/status")
+async def get_order_live_status(order_id: str):
+    """Get real-time order status from broker."""
+    try:
+        order_status = order_executor.get_order_status(order_id)
+        if not order_status:
+            # Fall back to ledger status
+            orders = ledger.get_orders()
+            order = next((o for o in orders if o.get("order_id") == order_id), None)
+            if not order:
+                raise HTTPException(status_code=404, detail="Order not found")
+            return _json_safe(
+                {
+                    "order_id": order_id,
+                    "status": order.get("status", "unknown"),
+                    "filled_qty": order.get("filled_qty", 0.0),
+                    "filled_price": order.get("filled_price", 0.0),
+                    "commission": order.get("commission", 0.0),
+                    "source": "ledger",
+                }
+            )
+
+        return _json_safe(
+            {
+                "order_id": order_id,
+                "status": order_status.status,
+                "filled_qty": order_status.filled_qty,
+                "filled_price": order_status.filled_price,
+                "commission": order_status.commission,
+                "source": "broker",
+                "updated_at": order_status.updated_at,
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch order status: {exc}") from exc
+
+
+@app.get("/v1/risk/monitor")
+async def get_risk_monitor():
+    """Get current portfolio risk exposure."""
+    daily_pnl = ledger.get_daily_pnl()
+    total_pnl = ledger.get_total_pnl()
+    orders = ledger.get_orders()
+
+    open_orders = [o for o in orders if o.get("status") == "OPEN"]
+    open_notional: float = sum(
+        _as_float(o.get("qty", 0.0)) * _as_float(o.get("entry_price", 0.0)) for o in open_orders
+    )
+
+    current_capital = 100000.0  # Base capital assumption
+    account = order_executor.get_account()
+    if isinstance(account, dict):
+        current_capital = _as_float(account.get("cash", 100000.0), 100000.0)
+
+    equity_curve = pd.Series([current_capital + _as_float(total_pnl)])
+    state = PortfolioRiskState(
+        equity_curve=equity_curve,
+        starting_capital=100000.0,
+        current_capital=current_capital + _as_float(total_pnl),
+        open_notional=open_notional,
+        day_start_capital=current_capital,
+    )
+
+    limits = risk_manager.check_limits(state)
+
+    return _json_safe(
+        {
+            "current_capital": current_capital + _as_float(total_pnl),
+            "daily_pnl": _as_float(daily_pnl.get("daily_pnl", 0.0)),
+            "total_pnl": _as_float(total_pnl),
+            "open_positions": len(open_orders),
+            "open_notional": open_notional,
+            "open_notional_pct": (
+                open_notional / (current_capital + _as_float(total_pnl))
+                if (current_capital + _as_float(total_pnl)) > 0
+                else 0.0
+            ),
+            "limits": limits,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+@app.get("/v1/risk/breaches")
+async def get_risk_breaches():
+    """Get active risk limit breaches."""
+    alerts = breach_tracker.get_alerts()
+    return _json_safe(alerts.to_dict())
+
+
+@app.post("/v1/risk/acknowledge-breach")
+async def acknowledge_risk_breach(breach_index: int = Query(ge=0)):
+    """Acknowledge a specific breach by index."""
+    success = breach_tracker.acknowledge_breach(breach_index)
+    if not success:
+        raise HTTPException(status_code=404, detail="Breach not found")
+    return {"success": True, "acknowledged_index": breach_index}
 
 
 @app.get("/v1/market-watcher/status")
