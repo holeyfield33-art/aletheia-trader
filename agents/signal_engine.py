@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from backtesting.data import DataUnavailableException
+
 NO_SIGNAL = "NO_SIGNAL"
 
 
@@ -273,30 +275,33 @@ class SignalEngine:
         signal is one of: BUY | SELL | HOLD | NO_SIGNAL
         filter_reason is non-empty only when signal == NO_SIGNAL.
         """
-        close = df["close"].astype(float)
-        if "high" in df.columns and "low" in df.columns:
-            high = df["high"].astype(float)
-            low = df["low"].astype(float)
-        else:
-            high = close * 1.001
-            low = close * 0.999
+        try:
+            close = df["close"].astype(float)
+            if "high" in df.columns and "low" in df.columns:
+                high = df["high"].astype(float)
+                low = df["low"].astype(float)
+            else:
+                high = close * 1.001
+                low = close * 0.999
 
-        snap = self._snapshot(close, high, low, correlation_penalty)
-        prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
-        last_price = float(close.iloc[-1].item())
+            snap = self._snapshot(close, high, low, correlation_penalty)
+            prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+            last_price = float(close.iloc[-1].item())
 
-        valid, reason = self._validate_signal(snap, prev_hist, last_price)
-        if not valid:
-            return NO_SIGNAL, snap.__dict__, reason
+            valid, reason = self._validate_signal(snap, prev_hist, last_price)
+            if not valid:
+                return NO_SIGNAL, snap.__dict__, reason
 
-        if snap.rsi < 35 and snap.macd_hist > 0 and prev_hist <= 0:
-            action = "BUY"
-        elif snap.rsi > 65 and snap.macd_hist < 0 and prev_hist >= 0:
-            action = "SELL"
-        else:
-            action = "HOLD"
+            if snap.rsi < 35 and snap.macd_hist > 0 and prev_hist <= 0:
+                action = "BUY"
+            elif snap.rsi > 65 and snap.macd_hist < 0 and prev_hist >= 0:
+                action = "SELL"
+            else:
+                action = "HOLD"
 
-        return action, snap.__dict__, ""
+            return action, snap.__dict__, ""
+        except DataUnavailableException as exc:
+            return self._data_stale_response(str(exc))
 
     def generate_options_signal(
         self,
@@ -308,27 +313,50 @@ class SignalEngine:
         signal is one of: CALL_BUY | PUT_BUY | HOLD | NO_SIGNAL
         filter_reason is non-empty only when signal == NO_SIGNAL.
         """
-        close = df["close"].astype(float)
-        if "high" in df.columns and "low" in df.columns:
-            high = df["high"].astype(float)
-            low = df["low"].astype(float)
-        else:
-            high = close * 1.001
-            low = close * 0.999
+        try:
+            close = df["close"].astype(float)
+            if "high" in df.columns and "low" in df.columns:
+                high = df["high"].astype(float)
+                low = df["low"].astype(float)
+            else:
+                high = close * 1.001
+                low = close * 0.999
 
-        snap = self._snapshot(close, high, low, correlation_penalty)
-        prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
-        last_price = float(close.iloc[-1].item())
+            snap = self._snapshot(close, high, low, correlation_penalty)
+            prev_hist = float(self.compute_macd(close)[2].iloc[-2].item()) if len(close) > 1 else 0.0
+            last_price = float(close.iloc[-1].item())
 
-        valid, reason = self._validate_signal(snap, prev_hist, last_price)
-        if not valid:
-            return NO_SIGNAL, snap.__dict__, reason
+            valid, reason = self._validate_signal(snap, prev_hist, last_price)
+            if not valid:
+                return NO_SIGNAL, snap.__dict__, reason
 
-        if snap.rsi < 35 and snap.macd_hist > 0:
-            action = "CALL_BUY"
-        elif snap.rsi > 65 and snap.macd_hist < 0:
-            action = "PUT_BUY"
-        else:
-            action = "HOLD"
+            if snap.rsi < 35 and snap.macd_hist > 0:
+                action = "CALL_BUY"
+            elif snap.rsi > 65 and snap.macd_hist < 0:
+                action = "PUT_BUY"
+            else:
+                action = "HOLD"
 
-        return action, snap.__dict__, ""
+            return action, snap.__dict__, ""
+        except DataUnavailableException as exc:
+            return self._data_stale_response(str(exc))
+
+    def _data_stale_response(self, reason: str) -> tuple[str, dict[str, float], str]:
+        return (
+            NO_SIGNAL,
+            {
+                "rsi": 50.0,
+                "macd": 0.0,
+                "macd_signal": 0.0,
+                "macd_hist": 0.0,
+                "bb_upper": 0.0,
+                "bb_mid": 0.0,
+                "bb_lower": 0.0,
+                "atr": 0.0,
+                "confidence": 0.0,
+                "mtf_confirmed": 0.0,
+                "recommended_size": 0.0,
+                "data_stale": 1.0,
+            },
+            f"Data feed interrupted: {reason}",
+        )

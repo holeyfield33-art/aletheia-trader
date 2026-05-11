@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from logging import getLogger
 
-import pandas as pd
 import yfinance as yf
 from dotenv import load_dotenv
 
 from agents.signal_engine import SignalEngine
 from audit.aletheia_wrapper import AletheiaWrapper
-from backtesting.data import DataManager
+from backtesting.data import DataManager, DataUnavailableException
 
 load_dotenv()
+logger = getLogger(__name__)
 
 
 def _categorize_expiration(exp_str: str) -> str:
@@ -104,72 +105,46 @@ class OptionsAgent:
         except Exception:
             return None
 
-    def _fallback_signal(self, symbol: str) -> dict[str, object]:
-        # Synthetic close series (25 rows so BB window of 20 can compute).
-        # Includes a deep dip to trigger oversold RSI and a MACD crossover.
-        synthetic = pd.DataFrame(
-            {
-                "close": [
-                    410.0,
-                    410.5,
-                    411.2,
-                    410.7,
-                    410.1,
-                    409.6,
-                    408.9,
-                    408.2,
-                    407.5,
-                    406.8,
-                    406.1,
-                    405.5,
-                    405.0,
-                    405.4,
-                    406.0,
-                    406.7,
-                    407.4,
-                    408.1,
-                    408.8,
-                    409.5,
-                    410.0,
-                    410.3,
-                    410.6,
-                    410.2,
-                    409.8,
-                ]
-            }
+    def _fallback_signal(self, symbol: str) -> None:
+        logger.critical(
+            "Data feed interrupted for %s options chain. Synthetic fallback is disabled; no signal generated.",
+            symbol,
         )
-        synthetic["high"] = synthetic["close"] * 1.001
-        synthetic["low"] = synthetic["close"] * 0.999
-        signal, indicators, filter_reason = self.engine.generate_options_signal(synthetic)
-        payload = {
-            "instrument_type": "options",
-            "symbol": symbol,
-            "signal": signal,
-            "current_price": float(synthetic["close"].iloc[-1].item()),
-            "expiration_hint": None,
-            "chain_metadata": {"expirations": [], "chains": {}, "fallback_mode": True},
-            "indicators": indicators,
-            "approval_required": True,
-            "fallback_mode": True,
-            "timestamp": datetime.now(UTC).isoformat(),
-        }
-        receipt = self.auditor.audit(action="generate_signal", payload=payload)
-        return {
-            "symbol": symbol,
-            "signal": signal,
-            "current_price": float(synthetic["close"].iloc[-1].item()),
-            "expiration": None,
-            "chain_data": {"expirations": [], "chains": {}, "fallback_mode": True},
-            "meta": indicators,
-            "filter_reason": filter_reason,
-            "receipt": receipt.get("receipt", "mock-receipt"),
-            "approved": False,
-        }
+        return None
 
     def run(self, symbol: str = "SPY") -> dict[str, object]:
-        data = self.get_price_data(symbol)
+        try:
+            data = self.get_price_data(symbol)
+        except DataUnavailableException as exc:
+            self._fallback_signal(symbol)
+            return {
+                "symbol": symbol,
+                "signal": "NO_SIGNAL",
+                "current_price": 0.0,
+                "expiration": None,
+                "chain_data": {"expirations": [], "chains": {}},
+                "meta": {},
+                "filter_reason": f"Data feed interrupted: {exc}",
+                "receipt": "mock-receipt",
+                "approved": False,
+                "data_stale": True,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
         if data.empty:
-            return self._fallback_signal(symbol)
+            self._fallback_signal(symbol)
+            return {
+                "symbol": symbol,
+                "signal": "NO_SIGNAL",
+                "current_price": 0.0,
+                "expiration": None,
+                "chain_data": {"expirations": [], "chains": {}},
+                "meta": {},
+                "filter_reason": "Data feed interrupted: empty dataset",
+                "receipt": "mock-receipt",
+                "approved": False,
+                "data_stale": True,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
 
         signal, indicators, filter_reason = self.engine.generate_options_signal(data)
         expiration = self.get_nearest_expiration(symbol)

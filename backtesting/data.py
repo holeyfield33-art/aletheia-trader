@@ -5,12 +5,32 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
 
 from audit.aletheia_wrapper import AletheiaWrapper
+
+
+class DataUnavailableException(RuntimeError):
+    """Raised when all configured market data backends fail."""
+
+    def __init__(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        backend_order: list[str],
+        failures: dict[str, str],
+    ) -> None:
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.backend_order = backend_order
+        self.failures = failures
+        failure_text = "; ".join(f"{k}: {v}" for k, v in failures.items()) or "no details"
+        super().__init__(
+            f"Data unavailable for {symbol} ({timeframe}) after backends {backend_order}: {failure_text}"
+        )
 
 
 class DataManager:
@@ -24,6 +44,7 @@ class DataManager:
         polygon_api_key: str | None = None,
         fmp_api_key: str | None = None,
         alpha_vantage_api_key: str | None = None,
+        strict_data_mode: bool | None = None,
         gateway_url: str | None = None,
         api_key: str | None = None,
     ) -> None:
@@ -33,6 +54,9 @@ class DataManager:
         self.polygon_api_key = polygon_api_key or os.getenv("POLYGON_API_KEY", "")
         self.fmp_api_key = fmp_api_key or os.getenv("FMP_API_KEY", "")
         self.alpha_vantage_api_key = alpha_vantage_api_key or os.getenv("ALPHA_VANTAGE_API_KEY", "")
+        if strict_data_mode is None:
+            strict_data_mode = os.getenv("STRICT_DATA_MODE", "true").lower() != "false"
+        self.strict_data_mode = bool(strict_data_mode)
         self.auditor = AletheiaWrapper(gateway_url=gateway_url, api_key=api_key)
 
     @staticmethod
@@ -144,20 +168,29 @@ class DataManager:
             )
             return data
 
-        synthetic = self._synthetic_ohlcv(start=start, end=end, timeframe=timeframe)
-        synthetic.attrs["source_backend"] = "synthetic"
-        synthetic.attrs["source_symbol"] = normalized
         self._audit_market_data_decision(
             symbol=normalized,
             timeframe=timeframe,
             start=start,
             end=end,
             backend_order=resolved_backends,
-            selected_backend="synthetic",
+            selected_backend="none",
             failures=failures,
             cache_hit=False,
         )
-        return synthetic
+        if self.strict_data_mode:
+            raise DataUnavailableException(
+                symbol=normalized,
+                timeframe=timeframe,
+                backend_order=resolved_backends,
+                failures=failures,
+            )
+
+        out = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        out.attrs["source_backend"] = "unavailable"
+        out.attrs["source_symbol"] = normalized
+        out.attrs["backend_failures"] = failures
+        return out
 
     @staticmethod
     def _env_backend_order() -> list[str]:
@@ -514,37 +547,6 @@ class DataManager:
         if normalized == "JPY":
             return "USD", "JPY"
         return normalized[:3], normalized[3:6]
-
-    @staticmethod
-    def _synthetic_ohlcv(start: str, end: str, timeframe: str) -> pd.DataFrame:
-        tf = timeframe.lower()
-        freq_map = {
-            "1m": "1min",
-            "5m": "5min",
-            "15m": "15min",
-            "30m": "30min",
-            "1h": "1h",
-            "60m": "1h",
-            "4h": "4h",
-            "1d": "1d",
-        }
-        freq = freq_map.get(tf, "1h")
-
-        idx = pd.date_range(start=start, end=end, freq=freq, tz="UTC")
-        if len(idx) < 250:
-            idx = pd.date_range(start=start, periods=500, freq="1h", tz="UTC")
-
-        base = np.linspace(100.0, 120.0, len(idx))
-        wave = np.sin(np.linspace(0, 24, len(idx))) * 2.0
-        close = base + wave
-
-        df = pd.DataFrame(index=idx)
-        df["close"] = close
-        df["open"] = df["close"].shift(1).fillna(df["close"])
-        df["high"] = df[["open", "close"]].max(axis=1) * 1.001
-        df["low"] = df[["open", "close"]].min(axis=1) * 0.999
-        df["volume"] = 10_000
-        return df
 
     def _audit_market_data_decision(
         self,

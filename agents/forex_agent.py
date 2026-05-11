@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from logging import getLogger
 
-import pandas as pd
 from dotenv import load_dotenv
 
 from agents.signal_engine import SignalEngine
 from audit.aletheia_wrapper import AletheiaWrapper
-from backtesting.data import DataManager
+from backtesting.data import DataManager, DataUnavailableException
 
 load_dotenv()
+logger = getLogger(__name__)
 
 
 class ForexAgent:
@@ -43,66 +44,40 @@ class ForexAgent:
             return data
         return data
 
-    def _fallback_signal(self, pair: str) -> dict[str, object]:
-        # Synthetic close series (25 rows so BB window of 20 can compute).
-        # Includes an RSI dip below 35 and a MACD crossover to survive validation.
-        synthetic = pd.DataFrame(
-            {
-                "close": [
-                    100.0,
-                    100.4,
-                    100.9,
-                    100.5,
-                    100.1,
-                    99.8,
-                    99.3,
-                    98.7,
-                    98.2,
-                    97.6,
-                    97.0,
-                    96.5,
-                    96.1,
-                    96.4,
-                    96.9,
-                    97.4,
-                    97.9,
-                    98.5,
-                    99.0,
-                    99.5,
-                    100.0,
-                    100.3,
-                    100.6,
-                    100.2,
-                    99.8,
-                ]
-            }
+    def _fallback_signal(self, pair: str) -> None:
+        logger.critical(
+            "Data feed interrupted for %s. Synthetic fallback is disabled; no signal generated.",
+            pair,
         )
-        synthetic["high"] = synthetic["close"] * 1.001
-        synthetic["low"] = synthetic["close"] * 0.999
-        signal, indicators, filter_reason = self.engine.generate_forex_signal(synthetic)
-        payload = {
-            "instrument_type": "forex",
-            "pair": pair,
-            "signal": signal,
-            "indicators": indicators,
-            "approval_required": True,
-            "fallback_mode": True,
-            "timestamp": datetime.now(UTC).isoformat(),
-        }
-        receipt = self.auditor.audit(action="generate_signal", payload=payload)
-        return {
-            "pair": pair,
-            "signal": signal,
-            "meta": indicators,
-            "filter_reason": filter_reason,
-            "receipt": receipt.get("receipt", "mock-receipt"),
-            "approved": False,
-        }
+        return None
 
     def run(self, pair: str = "EUR/USD") -> dict[str, object]:
-        data = self.get_forex_data(pair)
+        try:
+            data = self.get_forex_data(pair)
+        except DataUnavailableException as exc:
+            self._fallback_signal(pair)
+            return {
+                "pair": pair,
+                "signal": "NO_SIGNAL",
+                "meta": {},
+                "filter_reason": f"Data feed interrupted: {exc}",
+                "receipt": "mock-receipt",
+                "approved": False,
+                "data_stale": True,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
         if data.empty:
-            return self._fallback_signal(pair)
+            self._fallback_signal(pair)
+            return {
+                "pair": pair,
+                "signal": "NO_SIGNAL",
+                "meta": {},
+                "filter_reason": "Data feed interrupted: empty dataset",
+                "receipt": "mock-receipt",
+                "approved": False,
+                "data_stale": True,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
 
         signal, indicators, filter_reason = self.engine.generate_forex_signal(data)
         payload = {

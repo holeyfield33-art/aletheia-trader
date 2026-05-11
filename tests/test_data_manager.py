@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from backtesting.data import DataManager
+from backtesting.data import DataManager, DataUnavailableException
 
 
 def _sample_ohlcv() -> pd.DataFrame:
@@ -81,3 +81,51 @@ def test_data_manager_reuses_cache_before_refetch(tmp_path):
     assert not first.empty
     assert not second.empty
     assert second.attrs["source_backend"] == "yfinance"
+
+
+def test_data_manager_raises_when_all_backends_fail_in_strict_mode(tmp_path):
+    manager = DataManager(cache_dir=tmp_path, backend_order=["yfinance"], strict_data_mode=True)
+
+    def fake_fetch(
+        *, backend: str, symbol: str, timeframe: str, start: str, end: str
+    ) -> pd.DataFrame:
+        del backend, symbol, timeframe, start, end
+        raise RuntimeError("network down")
+
+    manager._fetch_from_backend = fake_fetch  # type: ignore[method-assign]
+
+    try:
+        manager.download(
+            symbol="EURUSD",
+            timeframe="1h",
+            start="2025-01-01",
+            end="2025-01-02",
+            use_cache=False,
+        )
+        raise AssertionError("Expected DataUnavailableException")
+    except DataUnavailableException as exc:
+        assert "Data unavailable" in str(exc)
+        assert "yfinance" in str(exc)
+
+
+def test_data_manager_returns_empty_non_strict_without_synthetic(tmp_path):
+    manager = DataManager(cache_dir=tmp_path, backend_order=["yfinance"], strict_data_mode=False)
+
+    def fake_fetch(
+        *, backend: str, symbol: str, timeframe: str, start: str, end: str
+    ) -> pd.DataFrame:
+        del backend, symbol, timeframe, start, end
+        raise RuntimeError("network down")
+
+    manager._fetch_from_backend = fake_fetch  # type: ignore[method-assign]
+
+    data = manager.download(
+        symbol="SPY",
+        timeframe="1h",
+        start="2025-01-01",
+        end="2025-01-02",
+        use_cache=False,
+    )
+
+    assert data.empty
+    assert data.attrs.get("source_backend") == "unavailable"

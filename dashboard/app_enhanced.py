@@ -230,6 +230,16 @@ def render_correlation_heatmap(corr_payload: dict[str, Any]) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _status_data_feed_interrupted(watcher_status: dict[str, Any]) -> bool:
+    snapshot = watcher_status.get("latest_snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    if bool(snapshot.get("data_feed_interrupted", False)):
+        return True
+    failures = snapshot.get("fetch_failures")
+    return isinstance(failures, dict) and bool(failures)
+
+
 def fetch_strategy_presets() -> list[dict[str, Any]]:
     fallback = [
         {
@@ -494,6 +504,11 @@ with tab1:
             )
             k4.metric("Last Error", str(watcher_status.get("last_error") or "none")[:18])
 
+            if _status_data_feed_interrupted(watcher_status):
+                st.error(
+                    "🚨 Data feed interrupted. Signal generation is paused until market data recovers."
+                )
+
             st.markdown("### Ticker + Regime Diagnostics")
             if watched_rows:
                 symbol_df = pd.DataFrame(watched_rows)
@@ -634,6 +649,12 @@ with tab2:
                     if resp.status_code == 200:
                         data = resp.json()
                         if data.get("filtered"):
+                            if data.get("data_feed_interrupted") or (
+                                "Data feed interrupted" in str(data.get("filter_reason", ""))
+                            ):
+                                st.error(
+                                    "🚨 Data feed interrupted. No signal generated while feeds are stale."
+                                )
                             render_filtered_signal(data)
                             render_signal_quality(data)
                         else:
@@ -772,10 +793,7 @@ with tab4:
             start=start_date.isoformat(),
             end=end_date.isoformat(),
             strategy=strategy_name,
-            strategy_params={
-                "risk_per_trade": risk_per_trade_decimal,
-                "strategy_preset_id": selected_preset_id,
-            },
+            strategy_params={"risk_per_trade": risk_per_trade_decimal},
             initial_cash=initial_cash,
             commission_bps=commission_bps,
             slippage_bps=slippage_bps,

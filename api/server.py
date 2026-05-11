@@ -104,6 +104,7 @@ class GenerateSignalResponse(BaseModel):
     confidence_score: float
     regime: str
     recommended_size: float
+    data_feed_interrupted: bool = False
 
 
 class ApproveSignalRequest(BaseModel):
@@ -155,6 +156,9 @@ async def generate_signal(req: GenerateSignalRequest):
     else:
         raise HTTPException(status_code=400, detail="agent_type must be 'forex' or 'options'")
 
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="Data feed interrupted")
+
     if result.get("signal") == "ERROR":
         raise HTTPException(
             status_code=500, detail=f"Signal generation failed: {result.get('error')}"
@@ -162,6 +166,9 @@ async def generate_signal(req: GenerateSignalRequest):
 
     signal_value: str = str(result.get("signal") or NO_SIGNAL)
     filter_reason: str = str(result.get("filter_reason") or "")
+    data_feed_interrupted = bool(result.get("data_stale", False))
+    if data_feed_interrupted and not filter_reason:
+        filter_reason = "Data feed interrupted"
     is_filtered = signal_value == NO_SIGNAL
 
     raw_meta = result.get("meta")
@@ -196,6 +203,7 @@ async def generate_signal(req: GenerateSignalRequest):
         confidence_score=float(indicators.get("confidence", 0.0)),
         regime=str(indicators.get("regime", "unknown")),
         recommended_size=float(indicators.get("recommended_size", 0.0)),
+        data_feed_interrupted=data_feed_interrupted,
     )
 
 
