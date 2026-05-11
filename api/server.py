@@ -8,7 +8,7 @@ import uuid
 from contextlib import suppress
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -20,6 +20,7 @@ from agents.forex_agent import ForexAgent
 from agents.market_watcher import MarketWatcher
 from agents.options_agent import OptionsAgent
 from agents.signal_engine import NO_SIGNAL
+from brokers.ledger_db import DatabaseLedger
 from brokers.order_executor import OrderExecutor
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
 from risk.breach_tracker import BreachTracker
@@ -27,8 +28,16 @@ from risk.manager import PortfolioRiskState, RiskConfig, RiskManager
 
 load_dotenv()
 
-app = FastAPI(title="Aletheia Trader API", version="1.0.1")
-ledger = SignalAndOrderLedger()
+app = FastAPI(title="Aletheia Trader API", version="1.1.0")
+# Use database ledger by default, fall back to JSON if DB_USE_DB=false
+USE_DB = os.getenv("DB_USE_DB", "true").lower() != "false"
+if USE_DB:
+    ledger: Union[DatabaseLedger, SignalAndOrderLedger] = DatabaseLedger(
+        os.getenv("DATABASE_URL", "sqlite:///./trading.db")
+    )
+else:
+    ledger = SignalAndOrderLedger()
+
 forex_agent = ForexAgent()
 options_agent = OptionsAgent()
 market_watcher = MarketWatcher(ledger=ledger)

@@ -13,6 +13,7 @@ import pandas as pd
 
 from agents.signal_engine import NO_SIGNAL, SignalEngine
 from backtesting.data import DataManager
+from brokers.ledger_db import DatabaseLedger
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
 from core.aletheia_guard import AletheiaCoreGuard
 from market_watcher.alerts import AlertEngine
@@ -50,7 +51,7 @@ class MarketWatcher:
         *,
         data_manager: DataManager | None = None,
         signal_engine: SignalEngine | None = None,
-        ledger: SignalAndOrderLedger | None = None,
+        ledger: SignalAndOrderLedger | DatabaseLedger | None = None,
         gateway_url: str | None = None,
         api_key: str | None = None,
     ) -> None:
