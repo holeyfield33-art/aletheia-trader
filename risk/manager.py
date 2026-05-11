@@ -159,7 +159,7 @@ class RiskManager:
     ) -> dict[str, object]:
         corr = self.correlation_matrix(returns_by_asset)
         if returns_by_asset:
-            portfolio_returns = pd.concat(list(returns_by_asset.values()), axis=1).mean(axis=1)
+            portfolio_returns = pd.concat(list(returns_by_asset.values()), axis=1).sum(axis=1)
         else:
             portfolio_returns = pd.Series(dtype=float)
         tail = self.var_cvar(portfolio_returns, confidence=self.config.var_confidence)

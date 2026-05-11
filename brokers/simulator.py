@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from brokers.profit_calculator import ProfitCalculator
+
 
 @dataclass
 class SimulatedOrder:
@@ -16,7 +18,12 @@ class SimulatedOrder:
     side: str
     qty: float
     entry_price: float
+    filled_price: float
+    filled_qty: float
+    commission: float
+    instrument_spec: dict[str, float | str]
     exit_price: float | None
+    realized_pnl: float | None
     status: str
     approved: bool
     created_at: str
@@ -57,7 +64,14 @@ class PaperSimulator:
         Path(temp_name).replace(self.ledger_path)
 
     def submit_order(
-        self, instrument: str, side: str, qty: float, price: float, approved: bool = False
+        self,
+        instrument: str,
+        side: str,
+        qty: float,
+        price: float,
+        approved: bool = False,
+        commission: float = 0.0,
+        instrument_spec: dict[str, float | str] | None = None,
     ) -> dict[str, object]:
         if qty <= 0:
             raise ValueError("qty must be > 0")
@@ -73,7 +87,12 @@ class PaperSimulator:
                 side=side,
                 qty=float(qty),
                 entry_price=float(price),
+                filled_price=float(price),
+                filled_qty=float(qty),
+                commission=float(commission),
+                instrument_spec=instrument_spec or ProfitCalculator.spec_dict(instrument, side),
                 exit_price=None,
+                realized_pnl=None,
                 status="OPEN" if approved else "PENDING_APPROVAL",
                 approved=approved,
                 created_at=now,
@@ -105,6 +124,7 @@ class PaperSimulator:
             for order in orders:
                 if order["order_id"] == order_id and order["status"] == "OPEN":
                     order["exit_price"] = float(exit_price)
+                    order["realized_pnl"] = round(ProfitCalculator.order_pnl(order, exit_price), 2)
                     order["status"] = "CLOSED"
                     order["closed_at"] = datetime.now(UTC).isoformat()
                     self._write(orders)
@@ -145,12 +165,9 @@ class PaperSimulator:
 
             status = str(order.get("status", ""))
             if status == "CLOSED" and order.get("exit_price") is not None:
-                side = str(order.get("side", ""))
-                sign = 1 if side.upper() in {"BUY", "CALL_BUY"} else -1
-                exit_price = self._as_float(order.get("exit_price", 0.0))
-                entry_price = self._as_float(order.get("entry_price", 0.0))
-                qty = self._as_float(order.get("qty", 0.0))
-                pnl += sign * (exit_price - entry_price) * qty
+                if order.get("realized_pnl") is None:
+                    order["realized_pnl"] = ProfitCalculator.order_pnl(order)
+                pnl += self._as_float(order.get("realized_pnl", 0.0))
                 closed += 1
             elif status in {"OPEN", "PENDING_APPROVAL"}:
                 open_count += 1
