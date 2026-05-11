@@ -281,17 +281,18 @@ async def close_order(req: CloseOrderRequest):
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or not open")
 
-    sign = 1 if order.get("side") in {"BUY", "CALL_BUY"} else -1
-    entry_price = _as_float(order.get("entry_price"))
-    qty = _as_float(order.get("qty"))
-    pnl = sign * (float(req.exit_price) - entry_price) * qty
+    pnl = _as_float(order.get("realized_pnl"))
 
     return {
         "order_id": req.order_id,
         "status": "CLOSED",
         "entry_price": order.get("entry_price"),
+        "filled_price": order.get("filled_price"),
         "exit_price": req.exit_price,
         "qty": order.get("qty"),
+        "filled_qty": order.get("filled_qty"),
+        "commission": order.get("commission"),
+        "instrument_spec": order.get("instrument_spec"),
         "pnl": round(pnl, 2),
         "closed_at": order.get("closed_at"),
     }

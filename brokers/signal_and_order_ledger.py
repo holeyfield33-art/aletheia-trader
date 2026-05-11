@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from brokers.profit_calculator import ProfitCalculator
+
 
 class SignalAndOrderLedger:
     """Unified ledger for signals and orders."""
@@ -130,6 +132,7 @@ class SignalAndOrderLedger:
         signal: dict[str, object],
         entry_price: float,
         qty: float = 1.0,
+        commission: float = 0.0,
     ) -> dict[str, object]:
         """Create an approved order from a signal."""
         if entry_price <= 0:
@@ -147,10 +150,17 @@ class SignalAndOrderLedger:
                 "side": signal.get("signal"),
                 "qty": float(qty),
                 "entry_price": float(entry_price),
+                "filled_qty": float(qty),
+                "filled_price": float(entry_price),
+                "commission": float(commission),
+                "instrument_spec": ProfitCalculator.spec_dict(
+                    str(signal.get("instrument", "")), str(signal.get("signal", ""))
+                ),
                 "status": "OPEN",
                 "approved_at": now.isoformat(),
                 "executed_at": now.isoformat(),
                 "exit_price": None,
+                "realized_pnl": None,
                 "closed_at": None,
             }
             orders.append(order)
@@ -176,6 +186,7 @@ class SignalAndOrderLedger:
                 if order.get("order_id") == order_id and order.get("status") == "OPEN":
                     order["status"] = "CLOSED"
                     order["exit_price"] = float(exit_price)
+                    order["realized_pnl"] = round(ProfitCalculator.order_pnl(order, exit_price), 2)
                     order["closed_at"] = datetime.now(UTC).isoformat()
                     self._atomic_write(self.orders_path, orders)
                     return order
@@ -202,12 +213,9 @@ class SignalAndOrderLedger:
                 continue
 
             if order.get("status") == "CLOSED" and order.get("exit_price"):
-                sign = 1 if order.get("side") in {"BUY", "CALL_BUY"} else -1
-                pnl += (
-                    sign
-                    * (float(order["exit_price"]) - float(order["entry_price"]))
-                    * float(order["qty"])
-                )
+                if order.get("realized_pnl") is None:
+                    order["realized_pnl"] = ProfitCalculator.order_pnl(order)
+                pnl += float(order.get("realized_pnl", 0.0) or 0.0)
                 closed += 1
 
         return {
@@ -225,11 +233,8 @@ class SignalAndOrderLedger:
 
         for order in orders:
             if order.get("status") == "CLOSED" and order.get("exit_price"):
-                sign = 1 if order.get("side") in {"BUY", "CALL_BUY"} else -1
-                pnl += (
-                    sign
-                    * (float(order["exit_price"]) - float(order["entry_price"]))
-                    * float(order["qty"])
-                )
+                if order.get("realized_pnl") is None:
+                    order["realized_pnl"] = ProfitCalculator.order_pnl(order)
+                pnl += float(order.get("realized_pnl", 0.0) or 0.0)
 
         return round(pnl, 2)

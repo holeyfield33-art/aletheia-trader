@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 from audit.aletheia_wrapper import AletheiaWrapper
 from backtesting.data import DataManager
 from backtesting.strategies import STRATEGY_REGISTRY, BaseStrategy
+from brokers.instrument_specs import resolve_instrument_spec
 from risk.manager import PortfolioRiskState, RiskManager
 
 
@@ -77,6 +78,7 @@ class BacktestEngine:
         results: dict[str, BacktestResult] = {}
         equity_curves: list[pd.Series] = []
         returns_by_asset: dict[str, pd.Series] = {}
+        capital_weights = self._capital_weights(config.symbols)
 
         for symbol in config.symbols:
             data = self.downloader.download(
@@ -89,7 +91,25 @@ class BacktestEngine:
             if data.empty:
                 continue
 
-            result = self._run_single(symbol=symbol, data=data, config=config)
+            symbol_weight = capital_weights.get(symbol, 0.0)
+            symbol_cash = float(config.initial_cash) * symbol_weight
+            symbol_cfg = BacktestConfig(
+                symbols=[symbol],
+                timeframe=config.timeframe,
+                start=config.start,
+                end=config.end,
+                strategy=config.strategy,
+                strategy_params=dict(config.strategy_params),
+                initial_cash=symbol_cash,
+                commission_bps=config.commission_bps,
+                slippage_bps=config.slippage_bps,
+                spread_bps=config.spread_bps,
+                risk_per_trade=config.risk_per_trade,
+                allow_short=config.allow_short,
+                use_cache=config.use_cache,
+            )
+
+            result = self._run_single(symbol=symbol, data=data, config=symbol_cfg)
             results[symbol] = result
             equity_curves.append(result.equity_curve.rename(symbol))
             returns_by_asset[symbol] = result.equity_curve.pct_change().fillna(0.0)
@@ -122,7 +142,7 @@ class BacktestEngine:
             )
 
         joined = pd.concat(equity_curves, axis=1).ffill().dropna(how="all")
-        portfolio_equity = joined.mean(axis=1).rename("equity")
+        portfolio_equity = joined.sum(axis=1).rename("equity")
         portfolio_returns = portfolio_equity.pct_change().fillna(0.0)
         portfolio_drawdown = (portfolio_equity / portfolio_equity.cummax() - 1.0).rename("drawdown")
 
@@ -173,6 +193,22 @@ class BacktestEngine:
             portfolio_metrics=portfolio_metrics,
             risk_snapshot=risk_snapshot,
         )
+
+    @staticmethod
+    def _capital_weights(symbols: list[str]) -> dict[str, float]:
+        if not symbols:
+            return {}
+
+        notionals: dict[str, float] = {}
+        for symbol in symbols:
+            spec = resolve_instrument_spec(symbol)
+            notionals[symbol] = max(float(spec.notional_per_unit), 1.0)
+
+        total_notional = float(sum(notionals.values()))
+        if total_notional <= 0:
+            even = 1.0 / float(len(symbols))
+            return {symbol: even for symbol in symbols}
+        return {symbol: notionals[symbol] / total_notional for symbol in symbols}
 
     def run_backtest(self, config: BacktestConfig) -> BacktestResult:
         if not config.symbols:
