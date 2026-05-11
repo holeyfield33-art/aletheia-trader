@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import suppress
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -381,14 +382,12 @@ with st.sidebar:
     st.caption(f"Current Mode: **{asset_class}** • **{strategy_preset}**")
 
 if api_ok and st.session_state.get("mw_selected_preset") != selected_preset_id:
-    try:
+    with suppress(Exception):
         requests.post(
             f"{API_BASE}/v1/market-watcher/strategies/select",
             params={"preset_id": selected_preset_id},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
-    except Exception:
-        pass
     st.session_state["mw_selected_preset"] = selected_preset_id
 
 scan_seconds = scan_seconds_from_label(scan_interval)

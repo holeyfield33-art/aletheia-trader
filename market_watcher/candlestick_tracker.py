@@ -62,13 +62,13 @@ class CandlestickTracker:
 
         o = float(latest["open"])
         h = float(latest["high"])
-        l = float(latest["low"])
+        low_price = float(latest["low"])
         c = float(latest["close"])
 
         body = abs(c - o)
-        candle_range = max(h - l, 1e-12)
+        candle_range = max(h - low_price, 1e-12)
         upper_wick = h - max(o, c)
-        lower_wick = min(o, c) - l
+        lower_wick = min(o, c) - low_price
 
         if body / candle_range <= 0.1:
             patterns.append("doji")
