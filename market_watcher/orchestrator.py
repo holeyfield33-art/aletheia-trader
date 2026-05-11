@@ -16,10 +16,13 @@ from backtesting.data import DataManager
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
 from core.aletheia_guard import AletheiaCoreGuard
 from market_watcher.alerts import AlertEngine
+from market_watcher.candlestick_tracker import CandlestickTracker
 from market_watcher.data_feeds import MarketDataFeeds
 from market_watcher.monitoring import HeartbeatMonitor, HookRegistry, MarketStateStore
 from market_watcher.regime_detector import RegimeDetector
 from market_watcher.signal_generator import WatcherSignalGenerator
+from market_watcher.strategies import get_preset, list_presets
+from market_watcher.ticker import LiveTicker
 
 
 @dataclass
@@ -27,6 +30,10 @@ class MarketWatcherConfig:
     symbols: list[str]
     timeframe: str = "1h"
     lookback_period: str = "30d"
+    strategy_preset_id: str = "safe_trend_follower"
+    eli5_mode: bool = True
+    risk_per_trade_percent: float = 1.0
+    max_daily_loss_percent: float = 3.0
     confirmation_timeframes: tuple[str, ...] = ("15m", "1h", "4h")
     poll_interval_seconds: float = 60.0
     signal_ttl_minutes: int = 90
@@ -52,6 +59,8 @@ class MarketWatcher:
         self.detector = RegimeDetector()
         self.signal_generator = WatcherSignalGenerator(signal_engine=signal_engine)
         self.alerts = AlertEngine()
+        self.ticker = LiveTicker()
+        self.candles = CandlestickTracker()
         self.state_store = MarketStateStore(max_history=self.config.history_limit)
         self.heartbeat = HeartbeatMonitor()
         self.hooks = HookRegistry()
@@ -95,6 +104,10 @@ class MarketWatcher:
         timeframe: str | None = None,
         poll_interval_seconds: float | None = None,
         lookback_period: str | None = None,
+        strategy_preset_id: str | None = None,
+        eli5_mode: bool | None = None,
+        risk_per_trade_percent: float | None = None,
+        max_daily_loss_percent: float | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             if symbols is not None:
@@ -105,6 +118,14 @@ class MarketWatcher:
                 self.config.poll_interval_seconds = poll_interval_seconds
             if lookback_period is not None:
                 self.config.lookback_period = lookback_period
+            if strategy_preset_id is not None:
+                self.config.strategy_preset_id = strategy_preset_id
+            if eli5_mode is not None:
+                self.config.eli5_mode = eli5_mode
+            if risk_per_trade_percent is not None:
+                self.config.risk_per_trade_percent = risk_per_trade_percent
+            if max_daily_loss_percent is not None:
+                self.config.max_daily_loss_percent = max_daily_loss_percent
         return self.status()
 
     def run_cycle(self) -> dict[str, Any]:
@@ -117,10 +138,21 @@ class MarketWatcher:
         )
 
         correlation_matrix = self._build_correlation_matrix(snapshots)
+        active_preset = get_preset(self.config.strategy_preset_id)
         snapshot: dict[str, Any] = {
             "timestamp": cycle_ts.isoformat(),
             "heartbeat": cycle_ts.isoformat(),
             "timeframe": self.config.timeframe,
+            "strategy_preset": {
+                "id": active_preset.id,
+                "name": active_preset.name,
+                "risk_level": active_preset.risk_level,
+                "description": active_preset.description,
+            },
+            "risk_controls": {
+                "risk_per_trade_percent": self.config.risk_per_trade_percent,
+                "max_daily_loss_percent": self.config.max_daily_loss_percent,
+            },
             "symbols": [],
             "alerts": [],
             "correlation_matrix": (
@@ -145,6 +177,7 @@ class MarketWatcher:
                 frame=feed.frame,
                 regime=regime,
                 correlation_penalty=corr_penalty,
+                strategy_profile=active_preset.default_parameters,
                 multi_tf_frames=multi_tf,
             )
             signal = str(result["signal"])
@@ -156,17 +189,28 @@ class MarketWatcher:
                 close=feed.frame["close"].astype(float),
             )
             anomaly = self.detector.anomaly_score(feed.frame["close"].astype(float))
+            ticker = self.ticker.build(symbol=symbol, frame=feed.frame)
+            candle = self.candles.update_from_frame(
+                symbol=symbol,
+                timeframe=self.config.timeframe,
+                frame=feed.frame,
+            )
+            regime_label = self.detector.plain_english_label(regime)
             diagnostics = {
                 "symbol": symbol,
                 "signal": signal,
                 "filter_reason": filter_reason,
                 "source_backend": feed.source_backend,
                 "last_price": feed.last_price,
+                "percent_change": ticker.percent_change,
                 "last_volume": feed.last_volume,
+                "session_high": ticker.session_high,
+                "session_low": ticker.session_low,
                 "order_flow_imbalance": feed.order_flow_imbalance,
                 "realized_volatility": feed.realized_volatility,
                 "volatility_regime": self._volatility_bucket(feed.realized_volatility),
                 "regime": str(indicators.get("regime", regime)),
+                "regime_label": regime_label,
                 "confidence": float(indicators.get("confidence", 0.0)),
                 "recommended_size": float(indicators.get("recommended_size", 0.0)),
                 "correlation_penalty": corr_penalty,
@@ -175,7 +219,37 @@ class MarketWatcher:
                 "sentiment_source": sentiment_source,
                 "sentiment_label": self._sentiment_label(sentiment_score),
                 "mtf_confirmed": bool(indicators.get("mtf_confirmed", False)),
+                "ticker": {
+                    "timestamp": ticker.timestamp,
+                    "last_price": ticker.last_price,
+                    "percent_change": ticker.percent_change,
+                    "volume": ticker.volume,
+                    "high": ticker.session_high,
+                    "low": ticker.session_low,
+                },
+                "candlestick": (
+                    {
+                        "timeframe": candle.timeframe,
+                        "timestamp": candle.timestamp,
+                        "open": candle.open,
+                        "high": candle.high,
+                        "low": candle.low,
+                        "close": candle.close,
+                        "volume": candle.volume,
+                        "patterns": candle.patterns,
+                    }
+                    if candle is not None
+                    else None
+                ),
             }
+
+            if self.config.eli5_mode:
+                diagnostics["eli5"] = self._eli5_summary(
+                    symbol=symbol,
+                    signal=signal,
+                    confidence=float(indicators.get("confidence", 0.0)),
+                    regime_label=regime_label,
+                )
 
             snapshot["symbols"].append(diagnostics)
             self.hooks.emit("symbol_update", diagnostics)
@@ -204,6 +278,7 @@ class MarketWatcher:
         latest = self.state_store.latest_snapshot()
         hb = self.heartbeat.snapshot()
         worker = self._thread
+        active_preset = get_preset(self.config.strategy_preset_id)
         return {
             "running": bool(worker and worker.is_alive() and not self._stop_event.is_set()),
             "cycle_count": hb["cycle_count"],
@@ -213,8 +288,37 @@ class MarketWatcher:
             "watched_symbols": list(self.config.symbols),
             "timeframe": self.config.timeframe,
             "poll_interval_seconds": self.config.poll_interval_seconds,
+            "strategy_preset_id": active_preset.id,
+            "strategy_preset_name": active_preset.name,
+            "eli5_mode": self.config.eli5_mode,
+            "risk_per_trade_percent": self.config.risk_per_trade_percent,
+            "max_daily_loss_percent": self.config.max_daily_loss_percent,
             "metrics_history_size": len(self.state_store.history()),
             "latest_snapshot": latest,
+        }
+
+    def list_strategy_presets(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": preset.id,
+                "name": preset.name,
+                "description": preset.description,
+                "best_market_conditions": preset.best_market_conditions,
+                "risk_level": preset.risk_level,
+                "default_parameters": dict(preset.default_parameters),
+                "expected_behavior": preset.expected_behavior,
+            }
+            for preset in list_presets()
+        ]
+
+    def set_strategy_preset(self, preset_id: str) -> dict[str, Any]:
+        preset = get_preset(preset_id)
+        self.config.strategy_preset_id = preset.id
+        return {
+            "id": preset.id,
+            "name": preset.name,
+            "description": preset.description,
+            "risk_level": preset.risk_level,
         }
 
     # Backward-compat hook used in tests.
@@ -336,3 +440,17 @@ class MarketWatcher:
         if sentiment_score <= -0.3:
             return "bearish"
         return "neutral"
+
+    @staticmethod
+    def _eli5_summary(*, symbol: str, signal: str, confidence: float, regime_label: str) -> str:
+        if signal in {NO_SIGNAL, "HOLD"}:
+            return (
+                f"For {symbol}, the market looks mixed right now ({regime_label}). "
+                "The system is waiting for a clearer setup before taking risk."
+            )
+        action = "buy" if signal == "BUY" else "sell"
+        return (
+            f"For {symbol}, the market currently looks like {regime_label}. "
+            f"The system suggests a {action} idea with confidence {confidence:.1f}/100 "
+            "after safety checks."
+        )

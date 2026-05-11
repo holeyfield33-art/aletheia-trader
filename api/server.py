@@ -126,6 +126,10 @@ class MarketWatcherStartRequest(BaseModel):
     timeframe: str = Field(default="1h", min_length=1, max_length=8)
     lookback_period: str = Field(default="30d", min_length=2, max_length=10)
     poll_interval_seconds: float = Field(default=60.0, gt=0)
+    strategy_preset_id: str | None = Field(default=None, min_length=3, max_length=64)
+    eli5_mode: bool | None = None
+    risk_per_trade_percent: float | None = Field(default=None, ge=0.1, le=10.0)
+    max_daily_loss_percent: float | None = Field(default=None, ge=0.5, le=30.0)
 
 
 @app.get("/health")
@@ -318,6 +322,19 @@ async def get_market_watcher_sentiment_health():
     return _json_safe(market_watcher.sentiment_provider_health())
 
 
+@app.get("/v1/market-watcher/strategies")
+async def get_market_watcher_strategies():
+    """List one-click strategy presets with beginner-safe descriptions."""
+    return _json_safe({"strategies": market_watcher.list_strategy_presets()})
+
+
+@app.post("/v1/market-watcher/strategies/select")
+async def select_market_watcher_strategy(preset_id: str = Query(min_length=3, max_length=64)):
+    """Select the active MarketWatcher strategy preset."""
+    selected = market_watcher.set_strategy_preset(preset_id)
+    return _json_safe({"selected": selected, "status": market_watcher.status()})
+
+
 @app.websocket("/v1/market-watcher/stream")
 async def market_watcher_stream(websocket: WebSocket, event: str = "cycle_complete"):
     """WebSocket stream for live watcher events (`cycle_complete` or `symbol_update`)."""
@@ -377,6 +394,10 @@ async def start_market_watcher(req: MarketWatcherStartRequest):
         timeframe=req.timeframe,
         poll_interval_seconds=req.poll_interval_seconds,
         lookback_period=req.lookback_period,
+        strategy_preset_id=req.strategy_preset_id,
+        eli5_mode=req.eli5_mode,
+        risk_per_trade_percent=req.risk_per_trade_percent,
+        max_daily_loss_percent=req.max_daily_loss_percent,
     )
     status = market_watcher.start()
     return _json_safe(status)
@@ -397,6 +418,10 @@ async def run_market_watcher_once(req: MarketWatcherStartRequest):
         timeframe=req.timeframe,
         poll_interval_seconds=req.poll_interval_seconds,
         lookback_period=req.lookback_period,
+        strategy_preset_id=req.strategy_preset_id,
+        eli5_mode=req.eli5_mode,
+        risk_per_trade_percent=req.risk_per_trade_percent,
+        max_daily_loss_percent=req.max_daily_loss_percent,
     )
     return _json_safe(market_watcher.run_cycle())
 
