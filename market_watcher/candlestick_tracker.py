@@ -24,7 +24,9 @@ class CandlestickTracker:
     def __init__(self) -> None:
         self._last_seen_ts: dict[tuple[str, str], str] = {}
 
-    def update_from_frame(self, *, symbol: str, timeframe: str, frame: pd.DataFrame) -> CandleSnapshot | None:
+    def update_from_frame(
+        self, *, symbol: str, timeframe: str, frame: pd.DataFrame
+    ) -> CandleSnapshot | None:
         if frame.empty:
             return None
 
@@ -34,7 +36,9 @@ class CandlestickTracker:
 
         last = frame.iloc[-1]
         timestamp_obj = frame.index[-1]
-        timestamp = timestamp_obj.isoformat() if hasattr(timestamp_obj, "isoformat") else str(timestamp_obj)
+        timestamp = (
+            timestamp_obj.isoformat() if hasattr(timestamp_obj, "isoformat") else str(timestamp_obj)
+        )
 
         key = (symbol, timeframe)
         self._last_seen_ts[key] = timestamp

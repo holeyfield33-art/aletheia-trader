@@ -230,6 +230,16 @@ def render_correlation_heatmap(corr_payload: dict[str, Any]) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _status_data_feed_interrupted(watcher_status: dict[str, Any]) -> bool:
+    snapshot = watcher_status.get("latest_snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    if bool(snapshot.get("data_feed_interrupted", False)):
+        return True
+    failures = snapshot.get("fetch_failures")
+    return isinstance(failures, dict) and bool(failures)
+
+
 def fetch_strategy_presets() -> list[dict[str, Any]]:
     fallback = [
         {
@@ -314,9 +324,7 @@ def _agent_type_for_asset(asset_class: str) -> str:
 
 api_ok, status = check_api()
 strategy_presets = fetch_strategy_presets()
-preset_by_name = {
-    str(item.get("name", "")): item for item in strategy_presets if item.get("name")
-}
+preset_by_name = {str(item.get("name", "")): item for item in strategy_presets if item.get("name")}
 
 # Sidebar - Global Controls
 with st.sidebar:
@@ -428,7 +436,9 @@ with tab1:
     c1, c2, c3 = st.columns(3)
     timeframe_choice = c1.selectbox("Timeframe", ["1m", "5m", "15m", "1h", "4h", "1d"], index=3)
     lookback = c2.text_input("Lookback", value="30d", help="Historical range used for analysis")
-    poll_seconds = c3.number_input("Poll seconds", min_value=5.0, value=float(scan_seconds), step=5.0)
+    poll_seconds = c3.number_input(
+        "Poll seconds", min_value=5.0, value=float(scan_seconds), step=5.0
+    )
 
     start_payload = {
         "symbols": [s.strip().upper() for s in symbols_text.split(",") if s.strip()],
@@ -442,7 +452,9 @@ with tab1:
     }
 
     action_col1, action_col2, action_col3 = st.columns(3)
-    if action_col1.button("▶ Start Watcher", type="primary", use_container_width=True, disabled=not api_ok):
+    if action_col1.button(
+        "▶ Start Watcher", type="primary", use_container_width=True, disabled=not api_ok
+    ):
         try:
             requests.post(
                 f"{API_BASE}/v1/market-watcher/start",
@@ -494,6 +506,11 @@ with tab1:
             )
             k4.metric("Last Error", str(watcher_status.get("last_error") or "none")[:18])
 
+            if _status_data_feed_interrupted(watcher_status):
+                st.error(
+                    "🚨 Data feed interrupted. Signal generation is paused until market data recovers."
+                )
+
             st.markdown("### Ticker + Regime Diagnostics")
             if watched_rows:
                 symbol_df = pd.DataFrame(watched_rows)
@@ -522,7 +539,9 @@ with tab1:
                 ]
                 if eli5_mode and eli5_rows:
                     with st.expander("🧠 Plain English Explanations", expanded=False):
-                        st.dataframe(pd.DataFrame(eli5_rows), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            pd.DataFrame(eli5_rows), use_container_width=True, hide_index=True
+                        )
             else:
                 st.info("No snapshots yet. Start the watcher or run one cycle.")
 
@@ -530,7 +549,9 @@ with tab1:
             history_payload = requests.get(
                 f"{API_BASE}/v1/market-watcher/history?limit=180", timeout=REQUEST_TIMEOUT_SECONDS
             ).json()
-            history = history_payload.get("history", []) if isinstance(history_payload, dict) else []
+            history = (
+                history_payload.get("history", []) if isinstance(history_payload, dict) else []
+            )
 
             candle_rows: list[dict[str, Any]] = []
             for cycle in history:
@@ -563,7 +584,9 @@ with tab1:
                 candle_symbols = sorted(candle_df["symbol"].dropna().unique().tolist())
                 chosen_symbol = st.selectbox("Chart Symbol", options=candle_symbols)
                 symbol_candles = candle_df[candle_df["symbol"] == chosen_symbol].copy()
-                symbol_candles["timestamp"] = pd.to_datetime(symbol_candles["timestamp"], errors="coerce")
+                symbol_candles["timestamp"] = pd.to_datetime(
+                    symbol_candles["timestamp"], errors="coerce"
+                )
                 symbol_candles = symbol_candles.dropna().sort_values("timestamp").tail(120)
 
                 fig = go.Figure(
@@ -586,7 +609,9 @@ with tab1:
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                latest_patterns = symbol_candles["patterns"].iloc[-1] if not symbol_candles.empty else ""
+                latest_patterns = (
+                    symbol_candles["patterns"].iloc[-1] if not symbol_candles.empty else ""
+                )
                 if latest_patterns:
                     st.caption(f"Latest pattern cues: {latest_patterns}")
             else:
@@ -634,10 +659,18 @@ with tab2:
                     if resp.status_code == 200:
                         data = resp.json()
                         if data.get("filtered"):
+                            if data.get("data_feed_interrupted") or (
+                                "Data feed interrupted" in str(data.get("filter_reason", ""))
+                            ):
+                                st.error(
+                                    "🚨 Data feed interrupted. No signal generated while feeds are stale."
+                                )
                             render_filtered_signal(data)
                             render_signal_quality(data)
                         else:
-                            st.success(f"✅ Signal: {data.get('signal', 'N/A')} for {signal_symbol}")
+                            st.success(
+                                f"✅ Signal: {data.get('signal', 'N/A')} for {signal_symbol}"
+                            )
                             render_signal_quality(data)
                             render_receipt(str(data.get("receipt", "")))
                             st.json(data.get("indicators", {}))
@@ -652,7 +685,9 @@ with tab2:
             pending_payload = requests.get(
                 f"{API_BASE}/v1/signals/pending", timeout=REQUEST_TIMEOUT_SECONDS
             ).json()
-            pending = pending_payload.get("signals", []) if isinstance(pending_payload, dict) else []
+            pending = (
+                pending_payload.get("signals", []) if isinstance(pending_payload, dict) else []
+            )
             if pending:
                 pending_df = pd.DataFrame(pending)
                 if "instrument" in pending_df.columns:
@@ -665,7 +700,9 @@ with tab2:
 
 with tab3:
     st.subheader("Approvals")
-    st.caption("Human review step before execution. Aletheia receipts remain visible for traceability.")
+    st.caption(
+        "Human review step before execution. Aletheia receipts remain visible for traceability."
+    )
     if api_ok:
         try:
             signals = (
@@ -772,10 +809,7 @@ with tab4:
             start=start_date.isoformat(),
             end=end_date.isoformat(),
             strategy=strategy_name,
-            strategy_params={
-                "risk_per_trade": risk_per_trade_decimal,
-                "strategy_preset_id": selected_preset_id,
-            },
+            strategy_params={"risk_per_trade": risk_per_trade_decimal},
             initial_cash=initial_cash,
             commission_bps=commission_bps,
             slippage_bps=slippage_bps,
@@ -805,7 +839,9 @@ with tab4:
             selected = st.selectbox("Inspect Symbol", symbols_available)
             result = report.results[selected]
             lcol, rcol = st.columns(2)
-            lcol.plotly_chart(page_engine.build_equity_curve_figure(result), use_container_width=True)
+            lcol.plotly_chart(
+                page_engine.build_equity_curve_figure(result), use_container_width=True
+            )
             rcol.plotly_chart(page_engine.build_drawdown_figure(result), use_container_width=True)
             render_monthly_heatmap(result.monthly_returns_heatmap, selected)
         else:

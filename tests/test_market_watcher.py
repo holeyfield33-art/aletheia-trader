@@ -7,7 +7,7 @@ import pandas as pd
 
 from agents.market_watcher import MarketWatcher, MarketWatcherConfig
 from agents.signal_engine import NO_SIGNAL
-from backtesting.data import DataManager
+from backtesting.data import DataManager, DataUnavailableException
 from brokers.signal_and_order_ledger import SignalAndOrderLedger
 from market_watcher.data_feeds import MarketDataFeeds
 
@@ -316,3 +316,40 @@ def test_sentiment_provider_failover_health():
     provider = health["alpha_vantage_news"]
     assert provider["failures"] >= 2
     assert provider["blocked"] is True
+
+
+def test_market_watcher_outage_sets_data_feed_interrupted_and_publishes_nothing(tmp_path):
+    ledger = SignalAndOrderLedger(
+        signals_path=str(tmp_path / "pending.json"),
+        orders_path=str(tmp_path / "orders.json"),
+    )
+    watcher = MarketWatcher(
+        config=MarketWatcherConfig(symbols=["EUR/USD", "SPY"], poll_interval_seconds=0.02),
+        ledger=ledger,
+        data_manager=DataManager(cache_dir=tmp_path / "cache"),
+    )
+
+    def fake_download(
+        *,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        use_cache: bool = True,
+        backend_order=None,
+    ):
+        del symbol, timeframe, start, end, use_cache, backend_order
+        raise DataUnavailableException(
+            symbol="EURUSD=X",
+            timeframe="1h",
+            backend_order=["yfinance"],
+            failures={"yfinance": "network down"},
+        )
+
+    watcher.data_manager.download = fake_download  # type: ignore[method-assign]
+
+    snapshot = watcher.run_cycle()
+    assert snapshot.get("data_feed_interrupted") is True
+    assert snapshot.get("symbols") == []
+    assert snapshot.get("fetch_failures")
+    assert ledger.get_pending_signals() == []

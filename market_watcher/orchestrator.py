@@ -143,6 +143,8 @@ class MarketWatcher:
             "timestamp": cycle_ts.isoformat(),
             "heartbeat": cycle_ts.isoformat(),
             "timeframe": self.config.timeframe,
+            "data_feed_interrupted": False,
+            "data_feed_message": "",
             "strategy_preset": {
                 "id": active_preset.id,
                 "name": active_preset.name,
@@ -160,6 +162,17 @@ class MarketWatcher:
             ),
             "fetch_failures": fetch_failures,
         }
+
+        if not snapshots and fetch_failures:
+            snapshot["data_feed_interrupted"] = True
+            snapshot["data_feed_message"] = "Data feed interrupted"
+            snapshot["alerts"].append(
+                {
+                    "level": "critical",
+                    "message": "Data feed interrupted",
+                    "details": fetch_failures,
+                }
+            )
 
         for symbol, feed in snapshots.items():
             corr_penalty = self._correlation_penalty(symbol, correlation_matrix)
